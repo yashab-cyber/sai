@@ -1,4 +1,5 @@
 from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 import logging
 import threading
@@ -6,6 +7,7 @@ import os
 import time
 
 app = Flask(__name__)
+CORS(app)
 # Allow CORS and provide a secret key for session/socket security
 app.config['SECRET_KEY'] = 'sai-ultra-secret'
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
@@ -25,9 +27,17 @@ state = {
 # The SAI instance will be injected after initialization
 sai_instance = None
 
-@app.route('/')
-def index():
-    return render_template('gui.html')
+# Changed to serve the React app directly
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve_react(path):
+    dist_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'web-ui', 'dist')
+    if path and os.path.exists(os.path.join(dist_dir, path)):
+        return send_from_directory(dist_dir, path)
+    if os.path.exists(os.path.join(dist_dir, 'index.html')):
+        return send_from_directory(dist_dir, 'index.html')
+    else:
+        return "<p>React build not found. Please run <code>npm run build</code> in <code>web-ui</code>.</p>", 404
 
 @app.route('/logs/<path:filename>')
 def serve_logs(filename):

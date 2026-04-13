@@ -81,7 +81,7 @@ class SafetyManager:
         """
         base_cmd = command.split()[0] if command else ""
         if base_cmd in self.ALLOWED_COMMANDS:
-            self.logger.info(f"Command validated: {command}")
+            self.logger.debug(f"Command validated: {command}")
             return True
         
         self.logger.warning(f"BLOCKED dangerous command: {command}")
