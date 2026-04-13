@@ -10,4 +10,10 @@ flask-socketio
 eventlet
 playwright
 Pillow
-tk
+pyautogui
+pynput
+opencv-python
+numpy
+pyttsx3
+SpeechRecognition
+pytesseract
