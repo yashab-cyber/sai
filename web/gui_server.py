@@ -77,6 +77,20 @@ def run_gui(port=5000):
         
     socketio.run(app, host='0.0.0.0', port=port, log_output=False)
 
+import socket
+
+def get_local_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # doesn't even have to be reachable
+        s.connect(('10.255.255.255', 1))
+        IP = s.getsockname()[0]
+    except Exception:
+        IP = '127.0.0.1'
+    finally:
+        s.close()
+    return IP
+
 class GUIManager:
     """Manages the lifecycle and real-time communication of the SAI Cockpit GUI."""
     
@@ -104,8 +118,8 @@ class GUIManager:
         self.telemetry_thread = threading.Thread(target=self._telemetry_loop, daemon=True)
         self.telemetry_thread.start()
 
-        self.logger.info(f"SAI COCKPIT ONLINE at http://localhost:{self.port}")
-        return {"status": "success", "url": f"http://localhost:{self.port}"}
+        self.logger.info(f"SAI COCKPIT ONLINE at http://localhost:{self.port} and http://{get_local_ip()}:{self.port}")
+        return {"status": "success", "url": f"http://{get_local_ip()}:{self.port}"}
 
     def _telemetry_loop(self):
         """Polls system metrics and broadcasts them to the cockpit."""
