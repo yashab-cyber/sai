@@ -1,0 +1,23 @@
+system:
+  name: "SAI (Self-Adaptive Intelligence)"
+  version: "1.0.0"
+  log_level: ${SAI_LOG_LEVEL:-INFO}
+
+safety:
+  level: ${SAI_SAFETY_LEVEL:-STRICT}
+  base_dir: ${SAI_BASE_DIR:-/home/kali/sai}
+  allow_self_modification: ${SAI_ALLOW_SELF_MOD:-true}
+
+brain:
+  provider: ${SAI_PROVIDER:-mock}
+  model: ${MODEL_NAME:-gpt-4-turbo}
+  temperature: ${SAI_TEMPERATURE:-0.2}
+
+memory:
+  db_path: ${SAI_DB_PATH:-logs/sai_memory.db}
+
+browser:
+  headless: ${SAI_BROWSER_HEADLESS:-false}
+  timeout: ${SAI_BROWSER_TIMEOUT:-30000}
+  locale: ${SAI_BROWSER_LOCALE:-en-US}
+  timezone: ${SAI_BROWSER_TIMEZONE:-UTC}

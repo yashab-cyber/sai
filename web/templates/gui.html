@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>S.A.I. COMMAND | JARVIS PROTOCOL v2</title>
+    <!-- Dependencies -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --cyan-glow: #00f2ff;
+            --magenta-glow: #ff00ff;
+            --bg-deep: #010208;
+            --panel-bg: rgba(5, 10, 20, 0.7);
+        }
+
+        body {
+            background: var(--bg-deep);
+            color: #e0f2fe;
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Space Grotesk', sans-serif;
+            perspective: 1000px;
+        }
+
+        .jetbrains { font-family: 'JetBrains Mono', monospace; }
+
+        .glass-jarvis {
+            background: var(--panel-bg);
+            backdrop-filter: blur(25px);
+            border: 1px solid rgba(0, 242, 255, 0.2);
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.5), inset 0 0 10px rgba(0, 242, 255, 0.05);
+        }
+
+        .glow-text { text-shadow: 0 0 10px rgba(0, 242, 255, 0.8), 0 0 20px rgba(0, 242, 255, 0.4); }
+
+        /* 3D Panel Animation */
+        .panel-3d {
+            transform: rotateY(1deg) rotateX(1deg);
+            transition: transform 0.3s ease;
+        }
+        .panel-3d:hover { transform: rotateY(0deg) rotateX(0deg) scale(1.005); }
+
+        /* Cyber Grids */
+        .grid-bg {
+            background-image: linear-gradient(rgba(0, 242, 255, 0.05) 1px, transparent 1px),
+                              linear-gradient(90deg, rgba(0, 242, 255, 0.05) 1px, transparent 1px);
+            background-size: 40px 40px;
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        #three-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .scan-line {
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(to right, transparent, rgba(0, 242, 255, 0.2), transparent);
+            position: absolute;
+            top: 0;
+            animation: scan 10s linear infinite;
+            z-index: 10;
+        }
+
+        @keyframes scan {
+            from { top: 0; }
+            to { top: 100%; }
+        }
+
+        .hud-border {
+            border-style: solid;
+            border-color: rgba(0, 242, 255, 0.3);
+            border-width: 0;
+        }
+        .hud-tl { border-top-width: 2px; border-left-width: 2px; width: 20px; height: 20px; }
+        .hud-tr { border-top-width: 2px; border-right-width: 2px; width: 20px; height: 20px; }
+        .hud-bl { border-bottom-width: 2px; border-left-width: 2px; width: 20px; height: 20px; }
+        .hud-br { border-bottom-width: 2px; border-right-width: 2px; width: 20px; height: 20px; }
+
+        .pulse-slow { animation: pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    </style>
+</head>
+<body>
+    <div class="grid-bg"></div>
+    <canvas id="three-canvas"></canvas>
+    <div id="root" class="relative z-10"></div>
+
+    <script type="text/javascript">
+        const { useState, useEffect, useRef } = React;
+
+        // --- THREE.JS LOGIC ---
+        const initThree = (containerId) => {
+            const canvas = document.getElementById(containerId);
+            const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+
+            const scene = new THREE.Scene();
+            const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
+
+            // Neural Core
+            const geometry = new THREE.SphereGeometry(2, 64, 64);
+            const material = new THREE.PointsMaterial({
+                color: 0x00f2ff,
+                size: 0.02,
+                transparent: true,
+                opacity: 0.4,
+                blending: THREE.AdditiveBlending
+            });
+            const points = new THREE.Points(geometry, material);
+            scene.add(points);
+
+            // Aura Ring (Voice Visualizer)
+            const auraGeom = new THREE.RingGeometry(2.5, 2.7, 64);
+            const auraMat = new THREE.MeshBasicMaterial({
+                color: 0x00f2ff,
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0
+            });
+            const auraMesh = new THREE.Mesh(auraGeom, auraMat);
+            scene.add(auraMesh);
+
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+
+            return { scene, points, auraMesh, renderer, camera, material };
+        };
+
+        const App = () => {
+            const [state, setState] = useState({
+                thought: "JARVIS PROTOCOL ACTIVE. TACTICAL HUD ONLINE.",
+                action: "SYSTEM_IDLE",
+                status: "online",
+                screenshot: "logs/hud.png",
+                history: [],
+                core_temp: "45°C",
+                net_speed: "0 KB/s",
+                cpu_load: "12%",
+                neural_load: "42%",
+                latency: "0%"
+            });
+            const [command, setCommand] = useState("");
+            const [isThinking, setIsThinking] = useState(false);
+            const socket = useRef(null);
+            const threeRef = useRef(null);
+
+            useEffect(() => {
+                threeRef.current = initThree('three-canvas');
+                
+                const animate = () => {
+                    if (threeRef.current) {
+                        const { points, auraMesh, renderer, scene, camera, material } = threeRef.current;
+                        
+                        // Check for Thermal Overload
+                        const currentTemp = parseFloat(state.core_temp || 0);
+                        if (currentTemp > 85) {
+                            material.color.setHex(0xff00ff); // Magenta alert
+                        } else {
+                            material.color.setHex(0x00f2ff);
+                        }
+
+                        // Rotation Logic
+                        const speed = isThinking ? 0.02 : 0.005;
+                        points.rotation.y += speed;
+                        points.rotation.x += speed * 0.5;
+                        
+                        // Aura Logic (Voice Pulsar)
+                        if (state.action === 'SPEAKING') {
+                            auraMesh.scale.x = auraMesh.scale.y = 1 + Math.sin(Date.now() * 0.01) * 0.2;
+                            auraMesh.material.opacity = 0.4 + Math.sin(Date.now() * 0.01) * 0.2;
+                            auraMesh.rotation.z += 0.05;
+                        } else {
+                            auraMesh.material.opacity = Math.max(0, auraMesh.material.opacity - 0.02);
+                        }
+                        
+                        // Pulsing Core
+                        const scale = 1 + Math.sin(Date.now() * 0.002) * (isThinking ? 0.05 : 0.02);
+                        points.scale.set(scale, scale, scale);
+                        
+                        renderer.render(scene, camera);
+                    }
+                    requestAnimationFrame(animate);
+                };
+                animate();
+
+                socket.current = io();
+                socket.current.on('state_update', (newState) => {
+                    setState(prev => ({ ...prev, ...newState }));
+                });
+
+                return () => {
+                    socket.current.disconnect();
+                    if (threeRef.current) threeRef.current.renderer.dispose();
+                };
+            }, [state.core_temp, state.action]);
+
+            const sendTask = async (e) => {
+                e.preventDefault();
+                if (!command.trim()) return;
+                setIsThinking(true);
+                try {
+                    await fetch('/api/command', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ command })
+                    });
+                    setCommand("");
+                } catch (err) { console.error(err); }
+            };
+
+            const TelemetryItem = ({ label, value, color='cyan' }) => (
+                React.createElement('div', { className: 'flex flex-col gap-1' }, [
+                    React.createElement('div', { className: 'flex justify-between items-end' }, [
+                        React.createElement('span', { className: 'text-[9px] jetbrains text-white/40 tracking-tighter' }, label),
+                        React.createElement('span', { className: `text-[10px] space-mono font-bold text-cyan-400` }, value || '0%')
+                    ]),
+                    React.createElement('div', { className: 'w-full h-[1px] bg-white/5 overflow-hidden' }, [
+                        React.createElement('div', { className: `h-full bg-cyan-500 transition-all duration-500`, 
+                          style: { width: (value && value.includes('%')) ? value : (value ? '50%' : '0%') } })
+                    ])
+                ])
+            );
+
+            return React.createElement('div', { className: 'h-screen w-screen p-8 flex flex-col gap-6 overflow-hidden' }, [
+                React.createElement('div', { className: 'scan-line' }),
+
+                // --- HEADER ---
+                React.createElement('header', { className: 'flex justify-between items-start' }, [
+                    React.createElement('div', { className: 'flex gap-6 items-center' }, [
+                        React.createElement('div', { className: 'relative w-16 h-16' }, [
+                            React.createElement('div', { className: 'absolute inset-0 rounded-full border-2 border-cyan-400/20 animate-spin-slow' }),
+                            React.createElement('div', { className: 'absolute inset-2 rounded-full border border-cyan-400/50' }),
+                            React.createElement('div', { className: `absolute inset-6 rounded-full bg-cyan-400 shadow-[0_0_20px_var(--cyan-glow)] ${isThinking ? 'animate-pulse' : ''}` })
+                        ]),
+                        React.createElement('div', { className: 'flex flex-col' }, [
+                            React.createElement('h1', { className: 'space-mono font-black text-3xl tracking-tight flex items-center gap-3' }, [
+                                React.createElement('span', { className: 'glow-text' }, 'JARVIS'),
+                                React.createElement('span', { className: 'text-white/10 font-thin' }, 'TACTICAL_MARK_V')
+                            ]),
+                            React.createElement('div', { className: 'flex items-center gap-3 text-[10px] font-bold jetbrains text-cyan-400/60' }, [
+                                React.createElement('span', { className: 'px-2 border border-cyan-400/30' }, 'PROTO_TACTICAL_ACTIVE'),
+                                `CORE_TEMP: ${state.core_temp}`
+                            ])
+                        ])
+                    ]),
+                    
+                    React.createElement('div', { className: 'flex gap-4' }, [
+                        ['NET_SYNC', state.net_speed], ['UPTIME', '04:22:15']
+                    ].map(([l, v]) => 
+                        React.createElement('div', { key: l, className: 'glass-jarvis p-4 rounded-xl border-l-2 border-cyan-400 flex flex-col items-end min-w-[120px]' }, [
+                            React.createElement('span', { className: 'text-[8px] jetbrains text-white/30' }, l),
+                            React.createElement('span', { className: 'text-xs font-bold text-white' }, v)
+                        ])
+                    ))
+                ]),
+
+                // --- MAIN ---
+                React.createElement('main', { className: 'flex-grow grid grid-cols-12 gap-8' }, [
+                    
+                    // Left: Vision Nexus
+                    React.createElement('div', { className: 'col-span-8 flex flex-col' }, [
+                        React.createElement('div', { className: 'flex-grow glass-jarvis rounded-3xl relative overflow-hidden panel-3d group' }, [
+                            React.createElement('div', { className: 'absolute top-4 left-4 hud-border hud-tl' }),
+                            React.createElement('div', { className: 'absolute top-4 right-4 hud-border hud-tr' }),
+                            React.createElement('div', { className: 'absolute bottom-4 left-4 hud-border hud-bl' }),
+                            React.createElement('div', { className: 'absolute bottom-4 right-4 hud-border hud-br' }),
+
+                            React.createElement('div', { className: 'absolute top-8 left-10 flex flex-col' }, [
+                                React.createElement('div', { className: 'flex items-center gap-2' }, [
+                                    React.createElement('div', { className: 'w-2 h-2 bg-red-500 rounded-full animate-pulse' }),
+                                    React.createElement('span', { className: 'text-[10px] font-bold jetbrains' }, 'LIVE_FEED_01')
+                                ]),
+                            ]),
+
+                            React.createElement('img', { 
+                                src: `/${state.screenshot}?t=${Date.now()}`, 
+                                className: 'w-full h-full object-contain mix-blend-screen opacity-60'
+                            })
+                        ])
+                    ]),
+
+                    // Right: Brain & Matrix
+                    React.createElement('div', { className: 'col-span-4 flex flex-col gap-6' }, [
+                        
+                        // Thought Stream
+                        React.createElement('div', { className: 'glass-jarvis rounded-3xl p-6 flex flex-col gap-4 panel-3d' }, [
+                            React.createElement('div', { className: 'flex items-center gap-3 text-cyan-400' }, [
+                                React.createElement('i', { 'data-lucide': 'cpu', className: 'w-4 h-4' }),
+                                React.createElement('span', { className: 'text-[10px] font-bold tracking-[0.2em]' }, 'THOUGHT_MATRIX')
+                            ]),
+                            React.createElement('p', { className: 'jetbrains text-xs leading-relaxed text-cyan-100/80 min-h-[80px]' }, state.thought)
+                        ]),
+
+                        // Telemetry
+                        React.createElement('div', { className: 'glass-jarvis rounded-3xl p-6 flex flex-col gap-4 panel-3d' }, [
+                            React.createElement('span', { className: 'text-[10px] font-bold text-white/40' }, 'TELEMETRY_STREAM'),
+                            React.createElement(TelemetryItem, { label: 'CPU_POWER', value: state.cpu_load }),
+                            React.createElement(TelemetryItem, { label: 'SYNAPTIC_RAM', value: state.neural_load }),
+                            React.createElement(TelemetryItem, { label: 'DISK_INTEGRITY', value: state.latency }), // Latency was mapped to disk
+                            React.createElement(TelemetryItem, { label: 'THERMAL_STATE', value: state.core_temp })
+                        ]),
+
+                        // Event Log
+                        React.createElement('div', { className: 'glass-jarvis rounded-3xl p-6 flex-grow flex flex-col gap-4 overflow-hidden panel-3d' }, [
+                            React.createElement('span', { className: 'text-[10px] font-bold text-white/40' }, 'EVENT_QUEUE'),
+                            React.createElement('div', { className: 'flex-grow overflow-y-auto pr-2 flex flex-col gap-2 jetbrains text-[9px]' }, 
+                                (state.history || []).slice(-10).map((h, i) => 
+                                    React.createElement('div', { key: i, className: 'flex gap-3 text-white/40' }, [
+                                        React.createElement('span', { className: 'text-cyan-400' }, '>'),
+                                        React.createElement('span', {}, h.action)
+                                    ])
+                                )
+                            )
+                        ])
+                    ])
+                ]),
+
+                // --- FOOTER ---
+                React.createElement('footer', { className: 'h-24 glass-jarvis rounded-3xl p-2 flex items-center relative overflow-hidden' }, [
+                    React.createElement('div', { className: 'absolute left-0 top-0 bottom-0 w-1 bg-cyan-400' }),
+                    React.createElement('form', { 
+                        onSubmit: sendTask,
+                        className: 'w-full flex items-center gap-8 px-8'
+                    }, [
+                        React.createElement('i', { 'data-lucide': 'terminal', className: 'w-6 h-6 text-cyan-400' }),
+                        React.createElement('input', {
+                            type: 'text',
+                            value: command,
+                            onChange: (e) => setCommand(e.target.value),
+                            placeholder: 'INITIALIZE COMMAND SEQUENCE...',
+                            className: 'flex-grow bg-transparent border-none outline-none text-md space-mono font-bold placeholder:text-white/10 text-cyan-50'
+                        }),
+                        React.createElement('button', {
+                            type: 'submit',
+                            disabled: isThinking,
+                            className: 'px-12 py-4 glass-jarvis rounded-xl border border-cyan-400/30 font-bold text-xs tracking-[0.3em]'
+                        }, isThinking ? 'LINK_BUSY' : 'EXECUTE')
+                    ])
+                ])
+            ]);
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(React.createElement(App));
+        setTimeout(() => lucide.createIcons(), 300);
+    </script>
+</body>
+</html>

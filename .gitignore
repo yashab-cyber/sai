@@ -1,0 +1,28 @@
+# Environments
+venv/
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs & Temporal Data
+logs/*.png
+logs/*.log
+logs/screenshot.png
+logs/hud.png
+
+# System
+.DS_Store
+*.swp
+
+# Workspace Data (User specific)
+workspace/
+!workspace/.gitkeep

@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAI | Advanced Orchestration Dashboard</title>
+    <style>
+        :root {
+            --bg: #0a0a0c;
+            --surface: #16161a;
+            --primary: #00f2ff;
+            --accent: #7000ff;
+            --text: #e0e0e6;
+            --text-dim: #a0a0a8;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        header {
+            padding: 20px 40px;
+            background: rgba(22, 22, 26, 0.8);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: 800;
+            letter-spacing: -1px;
+            background: linear-gradient(90deg, var(--primary), var(--accent));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .status-pill {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            background: rgba(0, 242, 255, 0.1);
+            border: 1px solid var(--primary);
+            color: var(--primary);
+        }
+
+        main {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 20px;
+            padding: 20px;
+            flex-grow: 1;
+            overflow: hidden;
+        }
+
+        .vision-container {
+            background: var(--surface);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        .vision-header {
+            padding: 12px 20px;
+            font-size: 14px;
+            color: var(--text-dim);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        #screenshot {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background: #000;
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .card {
+            background: var(--surface);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .card-title {
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            letter-spacing: 1px;
+        }
+
+        .thought-bubble {
+            font-size: 15px;
+            line-height: 1.5;
+            color: var(--primary);
+            font-style: italic;
+        }
+
+        .action-bubble {
+            font-family: 'Fira Code', monospace;
+            font-size: 13px;
+            background: rgba(255, 255, 255, 0.03);
+            padding: 10px;
+            border-radius: 6px;
+            border-left: 3px solid var(--accent);
+        }
+
+        .panic-btn {
+            margin-top: auto;
+            background: #ff3e3e;
+            color: white;
+            border: none;
+            padding: 15px;
+            border-radius: 8px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .panic-btn:hover {
+            transform: scale(0.98);
+            background: #e63535;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">SAI COCKPIT</div>
+        <div id="status" class="status-pill">ONLINE</div>
+    </header>
+
+    <main>
+        <div class="vision-container">
+            <div class="vision-header">LIVE VISION FEED</div>
+            <img id="screenshot" src="/logs/screenshot.png" alt="Vision Feed">
+        </div>
+
+        <div class="sidebar">
+            <div class="card">
+                <div class="card-title">Active Thought</div>
+                <div id="thought" class="thought-bubble">Initializing sensory modules...</div>
+            </div>
+
+            <div class="card">
+                <div class="card-title">Current Action</div>
+                <div id="action" class="action-bubble">waiting_for_input()</div>
+            </div>
+
+            <button class="panic-btn" onclick="alert('Panic mode engaged! (Simulated)')">EMERGENCY KILL SYSTEM</button>
+        </div>
+    </main>
+
+    <script>
+        async function updateDashboard() {
+            try {
+                const response = await fetch('/api/state');
+                const state = await response.json();
+                
+                document.getElementById('thought').innerText = state.thought;
+                document.getElementById('action').innerText = state.action;
+                document.getElementById('screenshot').src = '/' + state.screenshot + '?t=' + Date.now();
+                document.getElementById('status').innerText = state.status;
+            } catch (err) {
+                console.error("Dashboard update failed", err);
+            }
+        }
+
+        setInterval(updateDashboard, 1000);
+    </script>
+</body>
+</html>

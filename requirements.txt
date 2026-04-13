@@ -1,0 +1,13 @@
+pyyaml
+pydantic
+requests
+pytest
+python-dotenv
+openai
+google-generativeai
+flask
+flask-socketio
+eventlet
+playwright
+Pillow
+tk

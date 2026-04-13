@@ -1,0 +1,131 @@
+import json
+import logging
+import os
+import requests
+import base64
+from typing import List, Dict, Any, Optional
+from dotenv import load_dotenv
+
+class Brain:
+    """
+    Core Intelligence Layer (LLM Interface).
+    Supports multiple providers: OpenAI, Google Gemini, Anthropic, Ollama.
+    """
+    
+    def __init__(self, provider: Optional[str] = None):
+        # Load environment variables from .env
+        load_dotenv()
+        
+        self.provider = provider or os.getenv("SAI_PROVIDER", "mock").lower()
+        self.model = os.getenv("MODEL_NAME", "gpt-4-turbo")
+        self.logger = logging.getLogger("SAI.Brain")
+        
+        self.openai_key = os.getenv("OPENAI_API_KEY")
+        self.openai_base_url = os.getenv("OPENAI_BASE_URL")
+        self.gemini_key = os.getenv("GEMINI_API_KEY")
+        self.ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+        self.logger.info(f"Brain initialized with provider: {self.provider}")
+
+    def prompt(self, system_prompt: str, user_query: str, image_path: Optional[str] = None) -> Dict[str, Any]:
+        """Routes the query to the correct LLM provider, supporting optional visual input."""
+        try:
+            if self.provider == "openai":
+                return self._call_openai(system_prompt, user_query, image_path)
+            elif self.provider == "gemini":
+                return self._call_gemini(system_prompt, user_query, image_path)
+            elif self.provider == "ollama":
+                return self._call_ollama(system_prompt, user_query) # Ollama vision support pending
+            else:
+                return self._mock_response(user_query)
+        except Exception as e:
+            self.logger.error(f"LLM call failed: {str(e)}")
+            return self._mock_response(user_query)
+
+    def _encode_image(self, image_path: str) -> str:
+        """Encodes an image to a base64 string."""
+        with open(image_path, "rb") as image_file:
+            return base64.b64encode(image_file.read()).decode('utf-8')
+
+    def _call_openai(self, system_prompt: str, user_query: str, image_path: Optional[str] = None) -> Dict[str, Any]:
+        """Implementation for OpenAI API with Vision support."""
+        if not self.openai_key:
+            raise ValueError("OpenAI API key missing.")
+            
+        import openai
+        client = openai.OpenAI(
+            api_key=self.openai_key,
+            base_url=self.openai_base_url
+        )
+        
+        content = [{"type": "text", "text": user_query}]
+        if image_path and os.path.exists(image_path):
+            base64_image = self._encode_image(image_path)
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{base64_image}"}
+            })
+
+        response = client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": f"{system_prompt}. Respond ONLY in valid JSON."},
+                {"role": "user", "content": content}
+            ],
+            response_format={"type": "json_object"}
+        )
+        return json.loads(response.choices[0].message.content)
+
+    def _call_gemini(self, system_prompt: str, user_query: str, image_path: Optional[str] = None) -> Dict[str, Any]:
+        """Implementation for Google Gemini API with Multimodal support."""
+        if not self.gemini_key:
+            raise ValueError("Gemini API key missing.")
+            
+        import google.generativeai as genai
+        genai.configure(api_key=self.gemini_key)
+        model = genai.GenerativeModel(self.model)
+        
+        prompt_parts = [f"{system_prompt}\n\nTask: {user_query}\n\nRespond ONLY as a JSON object."]
+        
+        if image_path and os.path.exists(image_path):
+            from PIL import Image
+            img = Image.open(image_path)
+            prompt_parts.append(img)
+
+        response = model.generate_content(prompt_parts)
+        
+        # Extract JSON from response text
+        text = response.text.strip()
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0].strip()
+        elif text.startswith("```"): # Handle cases where it's just triple backticks without 'json'
+             text = text.strip("`").strip()
+        return json.loads(text)
+
+    def _call_ollama(self, system_prompt: str, user_query: str) -> Dict[str, Any]:
+        """Implementation for local Ollama API."""
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_query}
+            ],
+            "format": "json",
+            "stream": False
+        }
+        response = requests.post(f"{self.ollama_url}/api/chat", json=payload)
+        response.raise_for_status()
+        return json.loads(response.json()["message"]["content"])
+
+    def _mock_response(self, query: str) -> Dict[str, Any]:
+        """Fallback mock response."""
+        return {
+            "thought": f"MOCK MODE: Logic for '{query}' would be handled by {self.provider}.",
+            "plan": ["Simulate step 1", "Simulate step 2"],
+            "tool": "executor.shell",
+            "parameters": {"command": "echo SAI is running in mock/demo mode."}
+        }
+
+    def generate_plan(self, task: str) -> List[str]:
+        response = self.prompt("You are an expert autonomous AI software engineer.", task)
+        return response.get("plan", ["Research", "Execute", "Verify"])
