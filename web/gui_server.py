@@ -118,6 +118,10 @@ class GUIManager:
         self.telemetry_thread = threading.Thread(target=self._telemetry_loop, daemon=True)
         self.telemetry_thread.start()
 
+        # Voice Trigger Background Task (New)
+        if hasattr(self.sai, 'voice'):
+            self.sai.voice.start_voice_trigger(self.sai.handle_voice_command)
+
         self.logger.info(f"SAI COCKPIT ONLINE at http://localhost:{self.port} and http://{get_local_ip()}:{self.port}")
         return {"status": "success", "url": f"http://{get_local_ip()}:{self.port}"}
 
@@ -136,10 +140,21 @@ class GUIManager:
                             net_speed=stats["net_speed"],
                             core_temp=stats["temp"]
                         )
+                else:
+                    break # Stop looping if inactive
                 time.sleep(5)
             except Exception as e:
                 self.logger.error(f"Telemetry loop error: {e}")
                 time.sleep(10)
+
+    def stop(self):
+        """Stops the GUI server and associated background tasks."""
+        if hasattr(self.sai, 'voice'):
+            self.sai.voice.stop_voice_trigger()
+        
+        # Flask-SocketIO in daemon thread won't stop easily, but we signal pollers to stop
+        self.logger.info("GUI systems powering down...")
+        return {"status": "success", "message": "GUI systems powering down."}
 
     def update(self, **kwargs):
         """External interface to update the GUI state."""

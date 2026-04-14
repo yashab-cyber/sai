@@ -72,8 +72,8 @@ class SAI:
         self.gui = GUIManager(self)
         self.system = SystemManager(self.executor)
         self.hud_window = HUDWindow()
-        self.hud_window.start() # Begin live desktop HUD
         self.reflection = ReflectionEngine(self.brain, self.evolution)
+        self.is_running = False
         
         logging.info("S.A.I. systems initialized. All modules operational, sir.")
 
@@ -105,6 +105,11 @@ class SAI:
 
     def run_task(self, task: str, max_iterations=25):
         """Standardizes autonomous execution loop with thread-safe perception and stuck-loop detection."""
+        if self.is_running:
+            self.logger.warning("Another process is currently running, sir.")
+            return
+            
+        self.is_running = True
         print(f"\n[S.A.I.] Very good, sir. Initializing directive: {task}")
         history = []
         _consecutive_fails = 0
@@ -196,9 +201,22 @@ class SAI:
             self.reflection.reflect_on_task(task, history)
             self.gui.update(status="online")
             print("✅ Mission complete, sir. All systems nominal.")
+            self.is_running = False
         finally:
-            # Clean up temporary perception logs (screenshots)
+            self.logger.info("Cleaning up tactical logs...")
             self._cleanup_perception_logs()
+
+    def handle_voice_command(self, text: str):
+        """Callback for background voice trigger."""
+        if self.is_running:
+            self.logger.warning("Already executing a directive, sir. Ignoring voice command.")
+            return
+
+        self.logger.info(f"Voice directive received: {text}")
+        # Run the task in a separate thread so we don't block the voice trigger system permanently 
+        # (though VoiceManager will be 'busy' anyway)
+        task_thread = threading.Thread(target=self.run_task, args=(text,), daemon=True)
+        task_thread.start()
             # Clean up the browser session for this specific thread
             self.browser.close()
 
