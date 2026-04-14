@@ -5,7 +5,7 @@ import json
 import socketio
 import subprocess
 
-HUB_URL = "http://192.168.1.10:5000"  # Replace with actual Pi/Hub IP
+HUB_URL = "auto"  # Set to "auto" to detect S.A.I. Hub automatically
 TOKEN = "jarvis_network_key"
 DEVICE_ID = "android_phone"
 
@@ -106,7 +106,7 @@ def on_execute(data):
 if __name__ == "__main__":
     while True:
         try:
-            print(f"[*] Connecting to {HUB_URL}")
+            print(f"[*] Connecting to {ACTUAL_HUB_URL}")
             sio.connect(ACTUAL_HUB_URL, namespaces=['/agent'])
             sio.wait()
         except socketio.exceptions.ConnectionError:
