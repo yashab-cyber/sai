@@ -104,8 +104,17 @@ def run_termux_cmd(parts):
     # Relies on the termux-api package being installed 
     # e.g., pkg install termux-api
     try:
-        res = subprocess.run(parts, capture_output=True, text=True)
-        return {"status": "success", "stdout": res.stdout}
+        # Use shell=True for single string commands, or list for parts
+        is_shell = isinstance(parts, str)
+        res = subprocess.run(parts, capture_output=True, text=True, shell=is_shell)
+        
+        status = "success" if res.returncode == 0 else "error"
+        return {
+            "status": status, 
+            "stdout": res.stdout.strip(),
+            "stderr": res.stderr.strip(),
+            "code": res.returncode
+        }
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -137,18 +146,34 @@ def on_execute(data):
     response = {}
     
     if command == "open_app":
-        # Open any app by package name using monkey (universal launcher)
+        # Open any app by package name.
+        # Monkey is the most reliable "universal launcher" by package name
         pkg = params.get("package", "com.whatsapp")
-        response = run_termux_cmd([
-            "am", "start", 
-            "-a", "android.intent.action.MAIN",
-            "-c", "android.intent.category.LAUNCHER",
-            "-n", f"{pkg}"
-        ])
-        # Fallback: use monkey if component-based launch fails
-        if response.get("status") != "success" or "Error" in response.get("stdout", ""):
-            response = run_termux_cmd(["monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1"])
+        print(f"[*] Attempting to launch package: {pkg}")
+        response = run_termux_cmd(f"monkey -p {pkg} -c android.intent.category.LAUNCHER 1")
         
+        # Fallback to direct 'am' if monkey is missing
+        if response.get("status") != "success":
+            response = run_termux_cmd(["am", "start", "--user", "0", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", pkg])
+        
+    elif command == "shell":
+        # Execute raw shell command
+        cmd = params.get("cmd") or params.get("command")
+        if cmd:
+            print(f"[*] Running shell: {cmd}")
+            response = run_termux_cmd(cmd)
+        else:
+            response = {"status": "error", "message": "Missing 'cmd' parameter"}
+
+    elif command == "am_intent":
+        # Send raw Android intent
+        intent = params.get("intent")
+        extras = params.get("extras", "")
+        if intent:
+            response = run_termux_cmd(f"am start -a {intent} {extras}")
+        else:
+            response = {"status": "error", "message": "Missing 'intent' parameter"}
+            
     elif command == "battery":
         response = run_termux_cmd(["termux-battery-status"])
         
@@ -162,7 +187,7 @@ def on_execute(data):
         response = run_termux_cmd(["termux-tts-speak", text])
         
     else:
-        response = {"status": "error", "message": "Unknown command"}
+        response = {"status": "error", "message": f"Command '{command}' not implemented in agent side."}
         
     sio.emit('agent_response', {"command_id": command_id, "response": response}, namespace='/agent')
 
