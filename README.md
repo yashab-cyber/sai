@@ -9,6 +9,17 @@ SAI is a fully autonomous, visual-perceptive research and automation agent desig
 ## 🌌 Overview
 SAI combines high-level reasoning (LLMs) with low-level PC control, real-time vision, and a futuristic 3D interface. It doesn't just "chat"—it navigates the web, executes shell commands, manages files, and conducts research autonomously.
 
+
+### 🌐 Multi-Device Distributed Network
+SAI has been upgraded into a central Hub capable of discovering and controlling remote nodes:
+*   **Windows PC Agent**: Background Python service with PyAutoGUI for mouse/keyboard automation, app launching, and shell commands.
+*   **Android Termux Agent**: Native Android control via Termux API (shell execution, Android Intents).
+*   **mDNS Auto-Discovery**: Remote agents automatically find the SAI Hub on the local Wi-Fi without hardcoded IPs.
+*   **Task Execution Pipeline**: Offline queuing and retry logic for disconnected agents.
+*   **Real-time Node Monitoring**: Live connected-device dashboard integrated into the React frontend.
+*   **Device Plugin Architecture**: Extensible base classes to strictly validate and restrict payload capabilities per device type.
+*   **LAN Security**: Token-based WebSockets with strict IP-subnet whitelisting.
+
 ### Key Features
 *   **Vision Nexus**: Live visual perception with an "always-on-top" desktop HUD window.
 *   **JARVIS Cockpit**: A futuristic 3D web dashboard using React, Tailwind, and Three.js.
