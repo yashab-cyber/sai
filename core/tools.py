@@ -46,6 +46,66 @@ class ToolManifest:
             }
         },
         {
+            "name": "coder.replace_string",
+            "description": "Replaces an exact snippet of code with a new snippet. Use this for highly precise edits and refactors in any file type.",
+            "parameters": {
+                "path": "string",
+                "old_string": "string (the exact literal text to replace, including intact indentation/whitespace)",
+                "new_string": "string (the replacement text)"
+            }
+        },
+        {
+            "name": "coder.lint",
+            "description": "Runs flake8 on a python file to detect syntax and style errors.",
+            "parameters": {
+                "path": "string"
+            }
+        },
+        {
+            "name": "coder.format",
+            "description": "Runs black on a python file to auto-format it to standard PEP 8 style.",
+            "parameters": {
+                "path": "string"
+            }
+        },
+        {
+            "name": "coder.test",
+            "description": "Runs pytest on a given file or directory.",
+            "parameters": {
+                "path": "string"
+            }
+        },
+        {
+            "name": "coder.replace_string",
+            "description": "Replaces an exact snippet of code with a new snippet. Use this for highly precise edits and refactors in any file type.",
+            "parameters": {
+                "path": "string",
+                "old_string": "string (the exact literal text to replace, including intact indentation/whitespace)",
+                "new_string": "string (the replacement text)"
+            }
+        },
+        {
+            "name": "coder.lint",
+            "description": "Runs flake8 on a python file to detect syntax and style errors.",
+            "parameters": {
+                "path": "string"
+            }
+        },
+        {
+            "name": "coder.format",
+            "description": "Runs black on a python file to auto-format it to standard PEP 8 style.",
+            "parameters": {
+                "path": "string"
+            }
+        },
+        {
+            "name": "coder.test",
+            "description": "Runs pytest on a given file or directory.",
+            "parameters": {
+                "path": "string"
+            }
+        },
+        {
             "name": "coder.write",
             "description": "Writes a new Python module with syntax validation.",
             "parameters": {
@@ -182,6 +242,20 @@ class ToolManifest:
             }
         },
         {
+            "name": "network.list",
+            "description": "Lists all connected companion devices on the local network (like 'android_phone' or 'windows_pc').",
+            "parameters": {}
+        },
+        {
+            "name": "network.execute",
+            "description": "Routes a command to a companion device. S.A.I. automatically handles routing if you use the correct device_id (e.g., 'android_phone' for SMS/WhatsApp, 'windows_pc' for desktop apps). Supported commands: 'open_app', 'shell', 'send_sms', 'battery', 'tts'.",
+            "parameters": {
+                "device_id": "string (use 'android_phone' or 'windows_pc' if unsure)",
+                "command": "string (e.g., 'open_app', 'send_sms')",
+                "params": "object (e.g., {'package': 'com.whatsapp'} or {'text': 'hello', 'number': '123'})"
+            }
+        },
+        {
             "name": "system.ask",
             "description": "Safely interrupts the task to ask the user for information or confirmation. Returns the user's text response.",
             "parameters": {
@@ -253,6 +327,11 @@ class ToolManifest:
             "- You are loyal, efficient, and slightly protective of your operator.\n\n"
 
             "You are designed to observe your environment, execute commands, and evolve your own modules. "
+            "\n\nDISTRIBUTED ECOSYSTEM AWARENESS:\n"
+            "- You act as the Central Hub running on a server.\n"
+            "- You control remote nodes via 'network.execute'.\n"
+            "- If a user says 'Send a WhatsApp message' or calls someone, route it to 'android_phone'.\n"
+            "- If a user says 'Open a game on my PC', route it to 'windows_pc'.\n"
             "Always respond in valid JSON format.\n\n"
         )
         prompt += "Available tools:\n"

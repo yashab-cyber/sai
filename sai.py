@@ -33,6 +33,7 @@ from modules.analyzer import Analyzer
 from modules.file_manager import FileManager
 from modules.hud_window import HUDWindow
 from modules.system_manager import SystemManager
+from modules.device_manager import DeviceManager
 
 class SAI:
     """
@@ -51,6 +52,7 @@ class SAI:
         self.brain = Brain()
         
         # Initialize Modules
+        self.device_manager = DeviceManager()
         self.planner = Planner(self.brain)
         self.coder = Coder(self.executor)
         self.analyzer = Analyzer(self.memory, self.config['safety']['base_dir'])
@@ -309,8 +311,16 @@ class SAI:
             # Coder Operations
             elif tool_name == "coder.write":
                 return self.coder.write_module(params['path'], params['code'])
+            elif tool_name == "coder.replace_string":
+                return self.coder.replace_string(params['path'], params['old_string'], params['new_string'])
             elif tool_name == "coder.replace_function":
                 return self.coder.replace_function(params['path'], params['function_name'], params['new_function_code'])
+            elif tool_name == "coder.lint":
+                return self.coder.lint_code(params['path'])
+            elif tool_name == "coder.format":
+                return self.coder.format_code(params['path'])
+            elif tool_name == "coder.test":
+                return self.coder.run_tests(params['path'])
             
             # Analyzer & Evolution
             elif tool_name == "analyzer.scan":
@@ -369,6 +379,11 @@ class SAI:
             elif tool_name == "system.gui":
                 if params['action'] == "start":
                     return self.gui.start()
+            
+            elif tool_name == "network.list":
+                return self.device_manager.list_devices()
+            elif tool_name == "network.execute":
+                return self.device_manager.route_command(params['device_id'], params['command'], params.get('params', {}))
             
             elif tool_name == "system.ask":
                 print(f"\n[SAI PROMPT] {params['prompt']}")

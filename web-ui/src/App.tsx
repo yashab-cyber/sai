@@ -206,8 +206,96 @@ export default function App() {
   const [cmdInput, setCmdInput] = useState("");
   const [currentTime, setCurrentTime] = useState(new Date());
   const [uptime, setUptime] = useState(0);
+  const [micState, setMicState] = useState<'idle' | 'active' | 'error'>('idle');
+  const [devices, setDevices] = useState<{device_id: string, device_type: string, status: string}[]>([]);
+
   const historyEndRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const fetchDevices = () => {
+      fetch('/api/devices')
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'success') {
+            setDevices(data.devices || []);
+          }
+        }).catch(err => console.error(err));
+    };
+    fetchDevices();
+    const interval = setInterval(fetchDevices, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
   const socketRef = useRef<Socket | null>(null);
+
+  // Voice trigger (Web Speech API)
+  useEffect(() => {
+    let recognition: any = null;
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (SpeechRecognition && state.status === 'online') {
+      try {
+        // First try to explicitly ask for microphone permissions if not in secure context this might fail,
+        // but it will trigger the browser prompt
+        navigator.mediaDevices.getUserMedia({ audio: true })
+          .then(() => {
+            console.log("Microphone access granted.");
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = false;
+            recognition.lang = 'en-US';
+
+            recognition.onstart = () => setMicState('active');
+            
+            recognition.onerror = (event: any) => {
+              if (event.error === 'not-allowed') setMicState('error');
+              console.warn("Speech recognition error:", event.error);
+            };
+
+            recognition.onend = () => {
+              if (state.status === 'online') {
+                try { recognition.start(); } catch(e) {}
+              } else {
+                setMicState('idle');
+              }
+            };
+
+            recognition.onresult = (event: any) => {
+              const current = event.resultIndex;
+              const transcript = event.results[current][0].transcript.toLowerCase().trim();
+              console.log("[S.A.I. Ears] Heard:", transcript);
+
+              if (transcript.includes("hi sai") || transcript.includes("hi sy") || transcript.includes("hi sy") || transcript.includes("hey sai")) {
+                const match = transcript.match(/(?:hi sai|hi sy|hey sai|hi sci)\s+(.*)/i);
+                const command = match ? match[1].trim() : "GUI User hailed you via Voice.";
+                if (command) {
+                  fetch('/api/command', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command: command })
+                  });
+                }
+              }
+            };
+            
+            try { recognition.start(); } catch(e) {}
+          })
+          .catch((err) => {
+            console.error("Microphone access denied:", err);
+            setMicState('error');
+          });
+      } catch (e) {
+        console.warn("Media devices API not supported.");
+        setMicState('error');
+      }
+    }
+
+    return () => {
+      if (recognition) {
+        recognition.onend = null;
+        recognition.stop();
+      }
+    };
+  }, [state.status]);
 
   // Clock & uptime
   useEffect(() => {
@@ -279,7 +367,7 @@ export default function App() {
     { name: 'BRAIN', icon: <Brain size={12} />, status: state.status === 'online' ? 'active' : 'offline' },
     { name: 'VISION', icon: <Eye size={12} />, status: state.status === 'online' ? 'active' : 'offline' },
     { name: 'BROWSER', icon: <Globe size={12} />, status: state.status === 'online' ? 'idle' : 'offline' },
-    { name: 'VOICE', icon: <Mic size={12} />, status: 'idle' },
+    { name: 'VOICE', icon: <Mic size={12} />, status: state.status === 'online' ? (micState === 'idle' ? 'idle' : (micState === 'error' ? 'offline' : 'active')) : 'offline' },
     { name: 'CODER', icon: <Code size={12} />, status: state.status === 'online' ? 'idle' : 'offline' },
     { name: 'SAFETY', icon: <Shield size={12} />, status: state.status === 'online' ? 'active' : 'offline' },
     { name: 'FILES', icon: <FolderOpen size={12} />, status: state.status === 'online' ? 'active' : 'offline' },
@@ -334,6 +422,7 @@ export default function App() {
                 ['MODEL', 'ADVANCED NEURAL PROTO'],
                 ['UPTIME', formatUptime(uptime)],
                 ['SECURE LINK', 'ESTABLISHED'],
+                ['NODES LINKED', String(devices.length)],
               ].map(([label, val]) => (
                 <div key={label} className="flex justify-between items-center" style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.08em' }}>
                   <span style={{ color: 'var(--text-muted)' }}>{label}</span>
@@ -345,6 +434,17 @@ export default function App() {
 
           {/* Center: Clock & Net Speed */}
           <div className="hidden lg:flex items-center gap-6 opacity-0 animate-fade-in-up stagger-3 order-3 lg:order-2" style={{ animationFillMode: 'forwards' }}>
+            {devices.length > 0 && (
+              <div className="flex items-center gap-2 px-3 py-1 rounded-md" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)' }}>
+                {devices.map(d => (
+                  <div key={d.device_id} className="flex gap-1 items-center" style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }} title={d.device_id}>
+                    <Zap size={10} style={{ color: d.status === 'online' ? 'var(--cyan)' : 'var(--text-muted)' }} />
+                    <span style={{ color: 'var(--text-secondary)' }}>{d.device_type.substring(0,3).toUpperCase()}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div className="flex items-center gap-2" style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
               <Clock size={13} style={{ color: 'var(--cyan)', opacity: 0.6 }} />
               <span>{formatTime(currentTime)}</span>
@@ -461,11 +561,11 @@ export default function App() {
 
               <div className="flex flex-col sm:flex-row items-start gap-2 sm:gap-4">
                 {/* Left: label + action badge */}
-                <div className="flex flex-row sm:flex-col gap-1.5 flex-shrink-0 items-center sm:items-start sm:pt-0.5">
+                <div className="flex flex-col sm:flex-col gap-1.5 flex-shrink-0 items-start sm:pt-0.5 max-w-full sm:max-w-[40%]">
                   <p style={{ fontFamily: 'var(--font-display)', fontSize: '8px', letterSpacing: '0.25em', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                     COGNITIVE VECTOR
                   </p>
-                  <div className="inline-flex items-center gap-1.5 px-2 sm:px-3 py-1 rounded-full w-fit"
+                  <div className="inline-flex items-start gap-1.5 px-2 sm:px-3 py-1.5 rounded-md w-fit max-w-full"
                     style={{
                       background: isWorking ? 'var(--cyan-dim)' : 'rgba(255,255,255,0.03)',
                       border: `1px solid ${isWorking ? 'rgba(0,229,255,0.25)' : 'rgba(255,255,255,0.06)'}`,
@@ -474,11 +574,21 @@ export default function App() {
                       letterSpacing: '0.08em',
                       color: isWorking ? 'var(--cyan)' : 'var(--text-muted)',
                       transition: 'all 0.3s ease',
+                      wordBreak: 'break-word',
                     }}
                   >
-                    <span style={{ opacity: 0.5 }}>ACTION:</span>
-                    <span style={{ fontWeight: 600 }}>{state.action}</span>
-                    {isWorking && <Zap size={10} className="animate-pulse" />}
+                    <span style={{ opacity: 0.5, flexShrink: 0, marginTop: '2px' }}>ACTION:</span>
+                    <span style={{ 
+                      fontWeight: 600, 
+                      whiteSpace: 'normal',
+                      display: '-webkit-box',
+                      WebkitLineClamp: 4,
+                      WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden'
+                    }} title={state.action}>
+                      {state.action}
+                    </span>
+                    {isWorking && <Zap size={10} className="animate-pulse flex-shrink-0 mt-[2px]" />}
                   </div>
                 </div>
 

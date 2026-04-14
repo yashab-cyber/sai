@@ -36,7 +36,8 @@ class SafetyManager:
         "python", "python3", "pip", "pip3", "npm", "node",
         "mkdir", "rm", "cp", "mv", "touch", "chmod", "curl", "wget",
         "mousepad", "firefox", "chromium", "gnome-terminal", "code",
-        "wmctrl", "xdotool", "free", "df", "uptime", "pkill", "scrot", "sensors"
+        "wmctrl", "xdotool", "free", "df", "uptime", "pkill", "scrot", "sensors",
+        "pytest", "black", "flake8", "tsc", "eslint", "vite"
     ]
 
     def __init__(self, base_dir: str):
@@ -94,4 +95,28 @@ class SafetyManager:
         if package_name in self.ALLOWED_PACKAGES:
             return True
         self.logger.warning(f"BLOCKED unauthorized package: {package_name}")
+        return False
+
+    def is_ip_allowed(self, ip: str) -> bool:
+        """
+        Validates if an IP is allowed to connect to the SAI network.
+        By default, allows localhost and standard private subnets.
+        """
+        if ip == "127.0.0.1" or ip == "localhost":
+            return True
+        if ip.startswith("192.168.") or ip.startswith("10.") or ip.startswith("172."):
+            return True
+        self.logger.warning(f"BLOCKED unauthorized network IP: {ip}")
+        return False
+
+    def is_ip_allowed(self, ip: str) -> bool:
+        """
+        Validates if an IP is allowed to connect to the SAI network.
+        By default, allows localhost and standard private subnets.
+        """
+        if ip == "127.0.0.1" or ip == "localhost":
+            return True
+        if ip.startswith("192.168.") or ip.startswith("10.") or ip.startswith("172."):
+            return True
+        self.logger.warning(f"BLOCKED unauthorized network IP: {ip}")
         return False

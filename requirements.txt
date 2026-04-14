@@ -18,3 +18,7 @@ pyttsx3
 SpeechRecognition
 pytesseract
 flask-cors
+black
+flake8
+python-socketio
+

@@ -63,6 +63,50 @@ def broadcast_state(new_state):
     state.update(new_state)
     socketio.emit('state_update', state)
 
+
+# --- AGENT COMMUNICATION LAYER ---
+agent_sessions = {}  # device_id -> socket_sid
+
+@socketio.on('agent_connect', namespace='/agent')
+def handle_agent_connect(auth):
+    if sai_instance and hasattr(sai_instance, 'safety'):
+        if not sai_instance.safety.is_ip_allowed(request.remote_addr):
+            return {"status": "error", "message": "IP network blocked by safety"}
+
+    token = auth.get("token")
+    if token != os.environ.get("SAI_NETWORK_TOKEN", "jarvis_network_key"):
+        return {"status": "error", "message": "Unauthorized"}
+    
+    device_id = auth.get("device_id")
+    device_type = auth.get("device_type", "unknown")
+    if not device_id:
+        return {"status": "error", "message": "Missing device_id"}
+        
+    ip_addr = request.remote_addr
+    if sai_instance and hasattr(sai_instance, 'safety'):
+        if not sai_instance.safety.is_ip_allowed(ip_addr):
+            return {"status": "error", "message": "IP Address not whitelisted"}
+            
+    agent_sessions[device_id] = request.sid
+    if sai_instance and hasattr(sai_instance, 'device_manager'):
+        sai_instance.device_manager.register_device(device_id, device_type, ip_addr)
+        
+    return {"status": "success", "message": "Welcome to SAI Hub."}
+
+@socketio.on('agent_response', namespace='/agent')
+def handle_agent_response(data):
+    if sai_instance and hasattr(sai_instance, 'device_manager'):
+        sai_instance.device_manager.resolve_command(data.get("command_id"), data.get("response"))
+
+@socketio.on('disconnect', namespace='/agent')
+def handle_agent_disconnect():
+    for dev_id, sid in list(agent_sessions.items()):
+        if sid == request.sid:
+            del agent_sessions[dev_id]
+            if sai_instance and hasattr(sai_instance, 'device_manager'):
+                sai_instance.device_manager.unregister_device(dev_id)
+            break
+
 def run_gui(port=5000):
     import subprocess
     import time
@@ -122,6 +166,20 @@ class GUIManager:
         if hasattr(self.sai, 'voice'):
             self.sai.voice.start_voice_trigger(self.sai.handle_voice_command)
 
+        # Hook DeviceManager dispatch to SocketIO
+        if hasattr(self.sai, 'device_manager'):
+            def _dispatch(device_id, command_id, command, params):
+                sid = agent_sessions.get(device_id)
+                if sid:
+                    socketio.emit("execute", {
+                        "command_id": command_id,
+                        "command": command,
+                        "params": params
+                    }, room=sid, namespace='/agent')
+                else:
+                    raise Exception(f"No active socket session for {device_id}")
+            self.sai.device_manager.on_command_dispatch = _dispatch
+
         self.logger.info(f"SAI COCKPIT ONLINE at http://localhost:{self.port} and http://{get_local_ip()}:{self.port}")
         return {"status": "success", "url": f"http://{get_local_ip()}:{self.port}"}
 
@@ -133,12 +191,17 @@ class GUIManager:
                     telemetry = self.system.get_telemetry()
                     if telemetry["status"] == "success":
                         stats = telemetry["metrics"]
+                        devs = {}
+                        if hasattr(self.sai, 'device_manager'):
+                            devs = self.sai.device_manager.list_devices().get('devices', {})
+                        
                         self.update(
                             cpu_load=stats["cpu_load"],
                             neural_load=stats["ram_usage"],
                             latency=stats["disk_usage"],
                             net_speed=stats["net_speed"],
-                            core_temp=stats["temp"]
+                            core_temp=stats["temp"],
+                            devices=devs
                         )
                 else:
                     break # Stop looping if inactive
