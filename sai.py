@@ -205,6 +205,8 @@ class SAI:
         finally:
             self.logger.info("Cleaning up tactical logs...")
             self._cleanup_perception_logs()
+            # Clean up the browser session for this specific thread
+            self.browser.close()
 
     def handle_voice_command(self, text: str):
         """Callback for background voice trigger."""
@@ -217,8 +219,6 @@ class SAI:
         # (though VoiceManager will be 'busy' anyway)
         task_thread = threading.Thread(target=self.run_task, args=(text,), daemon=True)
         task_thread.start()
-            # Clean up the browser session for this specific thread
-            self.browser.close()
 
     def _cleanup_perception_logs(self):
         """Removes temporary visual logs created during the task."""

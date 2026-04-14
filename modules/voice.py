@@ -3,7 +3,22 @@ import speech_recognition as sr
 import logging
 import threading
 import time
+import os
+import sys
+from contextlib import contextmanager, redirect_stderr
 from typing import Dict, Any, Optional, Callable
+
+@contextmanager
+def silence_stderr():
+    """Context manager to suppress stderr noise from ALSA/Jack libraries."""
+    new_target = open(os.devnull, 'w')
+    old_target = sys.stderr
+    sys.stderr = new_target
+    try:
+        yield new_target
+    finally:
+        sys.stderr = old_target
+        new_target.close()
 
 class VoiceManager:
     """
@@ -19,20 +34,21 @@ class VoiceManager:
         self.trigger_thread = None
         
         try:
-            self.engine = pyttsx3.init()
-            # JARVIS-like voice settings: measured pace, full volume
-            self.engine.setProperty('rate', 140)  # Slightly slower for composed delivery
-            self.engine.setProperty('volume', 1.0)
-            
-            # Attempt to select a deeper male voice (closest to JARVIS)
-            voices = self.engine.getProperty('voices')
-            if voices:
-                # Prefer male English voice
-                for voice in voices:
-                    if 'male' in voice.name.lower() or 'english' in voice.name.lower():
-                        self.engine.setProperty('voice', voice.id)
-                        self.logger.info(f"Voice profile selected: {voice.name}")
-                        break
+            with silence_stderr():
+                self.engine = pyttsx3.init()
+                # JARVIS-like voice settings: measured pace, full volume
+                self.engine.setProperty('rate', 140)  # Slightly slower for composed delivery
+                self.engine.setProperty('volume', 1.0)
+                
+                # Attempt to select a deeper male voice (closest to JARVIS)
+                voices = self.engine.getProperty('voices')
+                if voices:
+                    # Prefer male English voice
+                    for voice in voices:
+                        if 'male' in voice.name.lower() or 'english' in voice.name.lower():
+                            self.engine.setProperty('voice', voice.id)
+                            self.logger.info(f"Voice profile selected: {voice.name}")
+                            break
         except Exception as e:
             self.logger.warning(f"Failed to initialize TTS engine: {e}")
             self.engine = None
@@ -48,8 +64,9 @@ class VoiceManager:
             if self.sai and hasattr(self.sai, 'gui'):
                 self.sai.gui.update(action="SPEAKING")
             
-            self.engine.say(text)
-            self.engine.runAndWait()
+            with silence_stderr():
+                self.engine.say(text)
+                self.engine.runAndWait()
             
             if self.sai and hasattr(self.sai, 'gui'):
                 self.sai.gui.update(action="SYSTEM_IDLE")
@@ -64,19 +81,24 @@ class VoiceManager:
         self.is_busy = True
         try:
             recognizer = sr.Recognizer()
-            with sr.Microphone() as source:
-                self.logger.info("Listening for speech...")
-                recognizer.adjust_for_ambient_noise(source, duration=0.5)
-                audio = recognizer.listen(source, timeout=timeout, phrase_time_limit=phrase_time_limit)
-                text = recognizer.recognize_google(audio)
-                self.logger.info(f"Heard: {text}")
-                return {"status": "success", "text": text}
+            with silence_stderr():
+                with sr.Microphone() as source:
+                    self.logger.info("Listening for speech...")
+                    recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                    audio = recognizer.listen(source, timeout=timeout, phrase_time_limit=phrase_time_limit)
+                    text = recognizer.recognize_google(audio)
+                    self.logger.info(f"Heard: {text}")
+                    return {"status": "success", "text": text}
         except sr.WaitTimeoutError:
             return {"status": "error", "message": "Listening timed out."}
         except sr.UnknownValueError:
             return {"status": "error", "message": "Speech not understood."}
         except Exception as e:
-            self.logger.error(f"Voice Recognition failed: {e}")
+            # Only log actual hardware errors, not driver warnings
+            if "No Default Input Device" in str(e):
+                self.logger.warning("Microphone hardware not detected, sir.")
+            else:
+                self.logger.error(f"Voice Recognition failed: {e}")
             return {"status": "error", "message": str(e)}
         finally:
             self.is_busy = False
@@ -113,26 +135,28 @@ class VoiceManager:
                 continue
                 
             try:
-                with sr.Microphone() as source:
-                    # Short burst listen for wake-word
-                    audio = recognizer.listen(source, timeout=2, phrase_time_limit=2)
-                    text = recognizer.recognize_google(audio).lower()
-                    
-                    if "hi sai" in text:
-                        self.logger.info("Wake-word detected!")
-                        # Acknowledge
-                        self.speak("Yes, sir?")
+                with silence_stderr():
+                    with sr.Microphone() as source:
+                        # Short burst listen for wake-word
+                        audio = recognizer.listen(source, timeout=2, phrase_time_limit=2)
+                        text = recognizer.recognize_google(audio).lower()
                         
-                        # Listen for actual command
-                        command_result = self.listen(timeout=8)
-                        if command_result["status"] == "success":
-                            self.logger.info(f"Voice Command: {command_result['text']}")
-                            callback(command_result["text"])
-                        else:
-                            self.speak("I'm sorry, sir, I didn't quite catch that.")
+                        if "hi sai" in text:
+                            self.logger.info("Wake-word detected!")
+                            # Acknowledge
+                            self.speak("Yes, sir?")
+                            
+                            # Listen for actual command
+                            command_result = self.listen(timeout=8)
+                            if command_result["status"] == "success":
+                                self.logger.info(f"Voice Command: {command_result['text']}")
+                                callback(command_result["text"])
+                            else:
+                                self.speak("I'm sorry, sir, I didn't quite catch that.")
                             
             except (sr.WaitTimeoutError, sr.UnknownValueError):
                 continue
             except Exception as e:
+                # Driver errors are common in loops; we log quietly
                 self.logger.debug(f"Trigger loop non-critical error: {e}")
-                time.sleep(1)
+                time.sleep(2)
