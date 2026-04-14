@@ -75,7 +75,7 @@ class SAI:
         self.hud_window.start() # Begin live desktop HUD
         self.reflection = ReflectionEngine(self.brain, self.evolution)
         
-        logging.info("SAI System Initialized.")
+        logging.info("S.A.I. systems initialized. All modules operational, sir.")
 
     def _load_config(self, path: str):
         """Loads YAML config and interpolates ${VAR} or ${VAR:-default} placeholders."""
@@ -105,11 +105,11 @@ class SAI:
 
     def run_task(self, task: str, max_iterations=25):
         """Standardizes autonomous execution loop with thread-safe perception."""
-        print(f"\n[SAI] Initializing task: {task}")
+        print(f"\n[S.A.I.] Very good, sir. Initializing directive: {task}")
         history = []
         try:
             for i in range(max_iterations):
-                print(f"  [Thinking] Iteration {i+1}...")
+                print(f"  [Processing] Tactical iteration {i+1}, sir...")
                 
                 # Sense: Update Vision HUD
                 hud_shot = self.vision.capture_screen("logs/hud.png")
@@ -130,18 +130,18 @@ class SAI:
                 
                 status = response.get("status", "ongoing")
                 
-                print(f"  > Thought: {thought}")
+                print(f"  > Analysis: {thought}")
                 
                 if status == "completed":
-                    print("🏁 Task goal reached.")
+                    print("🏁 Objective achieved, sir. Standing by for further directives.")
                     break
                     
                 if not tool_name:
-                    print("⚠️ No tool suggested. Ending loop.")
+                    print("⚠️ No further action required at this time, sir.")
                     break
 
                 # 2. Execute Action
-                print(f"  > Action: Calling {tool_name}...")
+                print(f"  > Executing: {tool_name}...")
                 action_result = self.execute_tool(tool_name, params)
                 
                 # 3. Observe
@@ -152,7 +152,7 @@ class SAI:
                     self.logger.warning(f"Observation truncated from {len(observation)} to 10000 chars.")
                     observation = observation[:10000] + "\n...[TRUNCATED FOR SYSTEM STABILITY]..."
                 
-                print(f"  > Observation: {observation[:100]}...")
+                print(f"  > Result: {observation[:100]}...")
                 
                 # 4. Record to history
                 history.append({
@@ -175,7 +175,7 @@ class SAI:
             # Final Reflection
             self.reflection.reflect_on_task(task, history)
             self.gui.update(status="online")
-            print("✅ Task finalized.")
+            print("✅ Mission complete, sir. All systems nominal.")
         finally:
             # Clean up temporary perception logs (screenshots)
             self._cleanup_perception_logs()
@@ -200,17 +200,18 @@ class SAI:
                     self.logger.warning(f"Failed to delete {file_path}: {e}")
 
     def start_chat(self):
-        """Persistent Interactive Chat REPL."""
-        print("\n" + "="*50)
-        print("  S.A.I. INTERFACE ONLINE")
-        print("="*50)
-        print("How can I assist you today?")
+        """Persistent Interactive Chat REPL — JARVIS Protocol."""
+        print("\n" + "═"*50)
+        print("  S.A.I. TACTICAL INTERFACE — ONLINE")
+        print("═"*50)
+        print("Good day, sir. All systems are operational.")
+        print("How may I be of assistance?")
         
         while True:
             try:
                 user_input = input("\n[USER] > ").strip()
                 if user_input.lower() in ["exit", "quit", "bye"]:
-                    print("[SAI] Shutting down. Systems off.")
+                    print("[S.A.I.] Very well, sir. Powering down all systems. It's been a pleasure.")
                     break
                 
                 if not user_input:
@@ -221,7 +222,7 @@ class SAI:
             except KeyboardInterrupt:
                 break
             except Exception as e:
-                print(f"[SAI] Internal system error: {str(e)}")
+                print(f"[S.A.I.] I'm afraid we have a situation, sir: {str(e)}")
 
     def execute_tool(self, tool_name: str, params: Dict[str, Any]) -> Any:
         """Dispatches to the appropriate module tool."""
@@ -372,13 +373,13 @@ class SAI:
             return {"status": "error", "message": str(e)}
 
     def self_improve(self):
-        """Self-Modification Loop."""
-        print("\n🧬 Initiating Self-Awareness & Improvement Scan...")
+        """Self-Modification Loop — JARVIS Evolution Protocol."""
+        print("\n🧬 If I may, sir — initiating self-diagnostic and improvement protocol...")
         self.analyzer.scan_codebase()
         
         # Simulating a self-improvement proposal
         # In practice, the Brain would analyze metrics and propose this
-        print("🔍 High-level analysis suggests optimizing coder.py...")
+        print("🔍 Analysis complete, sir. I've identified potential optimizations in the coder module...")
         
         proposal = self.brain.prompt(
             "Analyze modules/coder.py for improvements.",
@@ -387,7 +388,7 @@ class SAI:
         
         # For demo purposes, we don't actually let the mock brain overwrite code 
         # unless requested by a real task, but the engine is ready.
-        print("🛠️ Improvement engine ready for modules.")
+        print("🛠️ Evolution engine standing by, sir. Ready to implement improvements on your command.")
 
 if __name__ == "__main__":
     sai = SAI()
@@ -398,15 +399,15 @@ if __name__ == "__main__":
         
         # Keep process alive if GUI or Dashboard was started
         if sai.gui.is_active or sai.dashboard.is_active:
-            print("\n📡 S.A.I. PERSISTENCE MODE ACTIVE")
-            print("The web interface is running. Press Ctrl+C to shutdown.")
+            print("\n📡 S.A.I. PERSISTENCE MODE — All systems nominal, sir.")
+            print("The tactical interface is operational. Press Ctrl+C when you wish to power down.")
             try:
                 while sai.gui.is_active or sai.dashboard.is_active:
                     time.sleep(1)
             except KeyboardInterrupt:
-                print("\n🛑 SHUTDOWN SIGNAL RECEIVED. Powering down...")
+                print("\n🛑 Understood, sir. Initiating graceful shutdown sequence...")
                 sai.gui.update(status="offline")
                 sys.exit(0)
     else:
-        print("SAI v1.1.0 (Autonomous Mode) - Awaiting task...")
-        print("Usage: python3 sai.py --chat  OR  python3 sai.py 'task description'")
+        print("S.A.I. v1.1.0 — JARVIS Protocol Active")
+        print("At your service, sir. Usage: python3 sai.py --chat  OR  python3 sai.py 'directive'")

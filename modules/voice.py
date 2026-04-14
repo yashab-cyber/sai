@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional
 class VoiceManager:
     """
     Module for text-to-speech and speech-to-text.
+    Voice is calibrated for JARVIS-like delivery — composed, measured, authoritative.
     """
     
     def __init__(self, sai=None):
@@ -13,8 +14,19 @@ class VoiceManager:
         self.logger = logging.getLogger("SAI.Voice")
         try:
             self.engine = pyttsx3.init()
-            self.engine.setProperty('rate', 150)
+            # JARVIS-like voice settings: measured pace, full volume
+            self.engine.setProperty('rate', 140)  # Slightly slower for composed delivery
             self.engine.setProperty('volume', 1.0)
+            
+            # Attempt to select a deeper male voice (closest to JARVIS)
+            voices = self.engine.getProperty('voices')
+            if voices:
+                # Prefer male English voice
+                for voice in voices:
+                    if 'male' in voice.name.lower() or 'english' in voice.name.lower():
+                        self.engine.setProperty('voice', voice.id)
+                        self.logger.info(f"Voice profile selected: {voice.name}")
+                        break
         except Exception as e:
             self.logger.warning(f"Failed to initialize TTS engine: {e}")
             self.engine = None

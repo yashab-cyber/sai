@@ -1,11 +1,18 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Torus, Sphere, Icosahedron, Stars, MeshDistortMaterial } from '@react-three/drei';
-import { io } from 'socket.io-client';
-import { Terminal, Activity, Cpu, Network, Command, ShieldAlert, Zap, Target } from 'lucide-react';
+import { io, Socket } from 'socket.io-client';
+import {
+  Terminal, Activity, Cpu, HardDrive, Thermometer,
+  Zap, Eye, Globe, Mic, Brain, Shield, Code, FolderOpen, 
+  BarChart3, Settings, Wifi, Clock
+} from 'lucide-react';
 import * as THREE from 'three';
+import './App.css';
 
-const socket = io(window.location.host);
+// ════════════════════════════════════════════════════════
+// Types
+// ════════════════════════════════════════════════════════
 
 interface SaiState {
   thought: string;
@@ -14,120 +21,233 @@ interface SaiState {
   neural_load: string;
   cpu_load: string;
   latency: string;
-  history: string[];
+  net_speed: string;
+  core_temp: string;
+  screenshot: string;
+  history: Array<{ action: string; observation?: string } | string>;
 }
 
-// J.A.R.V.I.S / F.R.I.D.A.Y 3D Core Component
-const HolographicCore = ({ active }: { active: boolean }) => {
+// ════════════════════════════════════════════════════════
+// 3D Holographic Core
+// ════════════════════════════════════════════════════════
+
+const HolographicCore = ({ active, cpuPercent }: { active: boolean; cpuPercent: number }) => {
   const groupRef = useRef<THREE.Group>(null);
   const ring1Ref = useRef<THREE.Mesh>(null);
   const ring2Ref = useRef<THREE.Mesh>(null);
   const ring3Ref = useRef<THREE.Mesh>(null);
-  
-  const colorPrimary = "#00d8ff";
-  const colorSecondary = "#0055ff";
-  const colorActive = "#ffffff";
 
-  useFrame((state) => {
-    const t = state.clock.elapsedTime;
-    const speed = active ? 2.5 : 0.5;
-    
+  const colorPrimary = "#00e5ff";
+  const colorSecondary = "#7c4dff";
+
+  useFrame((frameState) => {
+    const t = frameState.clock.elapsedTime;
+    const speed = active ? 2.0 : 0.4;
+    const intensity = 0.5 + (cpuPercent / 100) * 1.5;
+
     if (groupRef.current) {
-      groupRef.current.rotation.y = t * 0.1 * speed;
-      groupRef.current.position.y = Math.sin(t * 1.5) * 0.1;
+      groupRef.current.rotation.y = t * 0.08 * speed;
+      groupRef.current.position.y = Math.sin(t * 1.2) * 0.08;
     }
     if (ring1Ref.current) {
-      ring1Ref.current.rotation.x = t * 0.5 * speed;
-      ring1Ref.current.rotation.y = t * 0.2 * speed;
+      ring1Ref.current.rotation.x = t * 0.4 * speed;
+      ring1Ref.current.rotation.y = t * 0.15 * speed;
+      (ring1Ref.current.material as THREE.MeshBasicMaterial).opacity = 0.3 + Math.sin(t * 2) * 0.15;
     }
     if (ring2Ref.current) {
-      ring2Ref.current.rotation.y = t * 0.4 * speed;
-      ring2Ref.current.rotation.z = t * 0.3 * speed;
+      ring2Ref.current.rotation.y = t * 0.3 * speed;
+      ring2Ref.current.rotation.z = t * 0.25 * speed;
     }
     if (ring3Ref.current) {
-      ring3Ref.current.rotation.x = t * 0.1 * speed;
-      ring3Ref.current.rotation.z = t * 0.6 * speed;
+      ring3Ref.current.rotation.x = t * 0.08 * speed;
+      ring3Ref.current.rotation.z = t * 0.5 * speed;
+      const s = 1 + Math.sin(t * 1.5) * 0.03 * intensity;
+      ring3Ref.current.scale.set(s, s, s);
     }
   });
 
   return (
     <group ref={groupRef}>
-      {/* Inner Energy Core */}
-      <Sphere args={[1.2, 64, 64]}>
+      <Sphere args={[1.1, 64, 64]}>
         <MeshDistortMaterial
-          color={active ? colorPrimary : "#051824"}
-          emissive={active ? colorPrimary : "#051824"}
-          emissiveIntensity={active ? 1.5 : 0.5}
-          distort={active ? 0.5 : 0.1}
-          speed={active ? 5 : 1}
-          roughness={0.1}
-          wireframe={false}
+          color={active ? colorPrimary : "#071420"}
+          emissive={active ? colorPrimary : "#071420"}
+          emissiveIntensity={active ? 1.2 + cpuPercent / 100 : 0.3}
+          distort={active ? 0.35 + cpuPercent / 300 : 0.08}
+          speed={active ? 4 : 0.8}
+          roughness={0.15}
         />
       </Sphere>
 
-      {/* Wireframe Shell */}
-      <Icosahedron args={[1.7, 2]}>
-        <meshBasicMaterial color={colorPrimary} wireframe transparent opacity={0.15} />
+      <Icosahedron args={[1.6, 2]}>
+        <meshBasicMaterial color={colorPrimary} wireframe transparent opacity={0.1} />
       </Icosahedron>
 
-      {/* Holographic Rings */}
-      <Torus ref={ring1Ref} args={[2.5, 0.015, 16, 100]} rotation={[Math.PI / 2, 0, 0]}>
-        <meshBasicMaterial color={active ? colorActive : colorPrimary} transparent opacity={0.6} />
+      <Torus ref={ring1Ref} args={[2.3, 0.012, 16, 100]} rotation={[Math.PI / 2, 0, 0]}>
+        <meshBasicMaterial color={colorPrimary} transparent opacity={0.5} />
       </Torus>
-      <Torus ref={ring2Ref} args={[2.8, 0.01, 16, 100]} rotation={[0, Math.PI / 3, 0]}>
-        <meshBasicMaterial color={colorSecondary} transparent opacity={0.4} />
+      <Torus ref={ring2Ref} args={[2.6, 0.008, 16, 100]} rotation={[0, Math.PI / 3, 0]}>
+        <meshBasicMaterial color={colorSecondary} transparent opacity={0.35} />
       </Torus>
-      <Torus ref={ring3Ref} args={[3.2, 0.02, 16, 100, Math.PI * 1.7]} rotation={[0, 0, Math.PI / 4]}>
-        <meshBasicMaterial color={colorPrimary} transparent opacity={0.8} />
+      <Torus ref={ring3Ref} args={[3.0, 0.015, 16, 100, Math.PI * 1.6]} rotation={[0, 0, Math.PI / 4]}>
+        <meshBasicMaterial color={colorPrimary} transparent opacity={0.6} />
       </Torus>
-      
-      {/* Target reticle elements on the Z axis */}
-      <Torus args={[0.5, 0.02, 16, 32]} position={[0, 0, 3.5]}>
-        <meshBasicMaterial color={colorPrimary} transparent opacity={0.3} />
+
+      <Torus args={[0.4, 0.015, 16, 32]} position={[0, 0, 3.2]}>
+        <meshBasicMaterial color={colorPrimary} transparent opacity={0.2} />
       </Torus>
-      <Torus args={[0.5, 0.02, 16, 32]} position={[0, 0, -3.5]}>
-        <meshBasicMaterial color={colorPrimary} transparent opacity={0.3} />
+      <Torus args={[0.4, 0.015, 16, 32]} position={[0, 0, -3.2]}>
+        <meshBasicMaterial color={colorSecondary} transparent opacity={0.2} />
       </Torus>
     </group>
   );
 };
 
+// ════════════════════════════════════════════════════════
+// Gauge Ring Component
+// ════════════════════════════════════════════════════════
+
+interface GaugeRingProps {
+  label: string;
+  value: string;
+  icon: React.ReactNode;
+  color: string;
+  colorClass: string;
+  size?: number;
+}
+
+const GaugeRing = ({ label, value, icon, color, colorClass, size = 72 }: GaugeRingProps) => {
+  const numericValue = parseFloat(value) || 0;
+  const clampedValue = Math.min(Math.max(numericValue, 0), 100);
+  const radius = (size - 8) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (clampedValue / 100) * circumference;
+
+  return (
+    <div className="flex flex-col items-center gap-2 opacity-0 animate-fade-in-up" style={{ animationFillMode: 'forwards' }}>
+      <div className="relative" style={{ width: size, height: size }}>
+        <svg width={size} height={size} className="transform -rotate-90">
+          <circle
+            className="gauge-ring-track"
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+          />
+          <circle
+            className={`gauge-ring-fill ${colorClass}`}
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            stroke={color}
+            strokeDasharray={circumference}
+            strokeDashoffset={offset}
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-xs font-bold" style={{ color, fontFamily: 'var(--font-mono)' }}>
+            {value || '0%'}
+          </span>
+        </div>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span style={{ color }} className="opacity-70">{icon}</span>
+        <span className="text-[9px] font-semibold tracking-wider uppercase" style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-display)' }}>
+          {label}
+        </span>
+      </div>
+    </div>
+  );
+};
+
+// ════════════════════════════════════════════════════════
+// Module Status Component
+// ════════════════════════════════════════════════════════
+
+interface ModuleInfo {
+  name: string;
+  icon: React.ReactNode;
+  status: 'active' | 'idle' | 'offline';
+}
+
+const ModuleStatus = ({ modules }: { modules: ModuleInfo[] }) => (
+  <div className="flex flex-col gap-1.5">
+    {modules.map((mod, i) => (
+      <div
+        key={mod.name}
+        className="module-indicator opacity-0 animate-fade-in-up"
+        style={{ animationDelay: `${i * 0.05}s`, animationFillMode: 'forwards' }}
+      >
+        <div className={`module-dot ${mod.status}`} />
+        <span className="opacity-60">{mod.icon}</span>
+        <span style={{ color: 'var(--text-secondary)' }}>{mod.name}</span>
+      </div>
+    ))}
+  </div>
+);
+
+// ════════════════════════════════════════════════════════
+// Main App
+// ════════════════════════════════════════════════════════
+
 export default function App() {
   const [state, setState] = useState<SaiState>({
-    thought: "AWAITING DIRECTIVE...",
-    action: "SYSTEM_IDLE",
+    thought: "Systems nominal, sir. All modules operational and standing by for your directive.",
+    action: "STANDBY",
     status: "offline",
     neural_load: "0%",
     cpu_load: "0%",
-    latency: "0ms",
+    latency: "0%",
+    net_speed: "0 KB/s",
+    core_temp: "N/A",
+    screenshot: "logs/hud.png",
     history: []
   });
-  
-  const [cmdInput, setCmdInput] = useState("");
-  const historyEndRef = useRef<HTMLDivElement>(null);
 
+  const [cmdInput, setCmdInput] = useState("");
+  const [currentTime, setCurrentTime] = useState(new Date());
+  const [uptime, setUptime] = useState(0);
+  const historyEndRef = useRef<HTMLDivElement>(null);
+  const socketRef = useRef<Socket | null>(null);
+
+  // Clock & uptime
   useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+      setUptime(prev => prev + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Socket connection
+  useEffect(() => {
+    const socket = io(window.location.host);
+    socketRef.current = socket;
+
     socket.on('connect', () => setState(s => ({ ...s, status: 'online' })));
-    socket.on('state_update', (newState: SaiState) => setState(newState));
+    socket.on('state_update', (newState: Partial<SaiState>) => {
+      setState(prev => ({ ...prev, ...newState }));
+    });
     socket.on('disconnect', () => setState(s => ({ ...s, status: 'offline' })));
 
     return () => {
       socket.off('connect');
       socket.off('state_update');
       socket.off('disconnect');
+      socket.disconnect();
     };
   }, []);
 
+  // Auto-scroll event log
   useEffect(() => {
     if (historyEndRef.current) {
       historyEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [state.history]);
 
-  const sendCommand = async (e: React.FormEvent) => {
+  const sendCommand = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!cmdInput.trim()) return;
-    
+    if (!cmdInput.trim() || state.status !== 'online') return;
+
     try {
       await fetch('/api/command', {
         method: 'POST',
@@ -136,172 +256,337 @@ export default function App() {
       });
       setCmdInput("");
     } catch (err) {
-      console.error("Command Error", err);
+      console.error("Command dispatch failed:", err);
     }
+  }, [cmdInput, state.status]);
+
+  // Derived state
+  const isWorking = state.status === "online" && state.action !== "SYSTEM_IDLE" && state.action !== "IDLE";
+  const cpuPercent = parseFloat(state.cpu_load) || 0;
+
+  const formatUptime = (secs: number) => {
+    const h = String(Math.floor(secs / 3600)).padStart(2, '0');
+    const m = String(Math.floor((secs % 3600) / 60)).padStart(2, '0');
+    const s = String(secs % 60).padStart(2, '0');
+    return `${h}:${m}:${s}`;
   };
 
-  const isWorking = state.status === "online" && state.action !== "SYSTEM_IDLE" && state.action !== "IDLE";
-  const glowColor = state.status === 'online' ? 'shadow-[0_0_15px_rgba(0,216,255,0.4)]' : 'shadow-[0_0_15px_rgba(239,68,68,0.4)]';
-  const borderColor = state.status === 'online' ? 'border-[#00d8ff]' : 'border-red-500';
+  const formatTime = (d: Date) =>
+    d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+  // Module list
+  const modules: ModuleInfo[] = [
+    { name: 'BRAIN', icon: <Brain size={12} />, status: state.status === 'online' ? 'active' : 'offline' },
+    { name: 'VISION', icon: <Eye size={12} />, status: state.status === 'online' ? 'active' : 'offline' },
+    { name: 'BROWSER', icon: <Globe size={12} />, status: state.status === 'online' ? 'idle' : 'offline' },
+    { name: 'VOICE', icon: <Mic size={12} />, status: 'idle' },
+    { name: 'CODER', icon: <Code size={12} />, status: state.status === 'online' ? 'idle' : 'offline' },
+    { name: 'SAFETY', icon: <Shield size={12} />, status: state.status === 'online' ? 'active' : 'offline' },
+    { name: 'FILES', icon: <FolderOpen size={12} />, status: state.status === 'online' ? 'active' : 'offline' },
+    { name: 'SYSTEM', icon: <BarChart3 size={12} />, status: state.status === 'online' ? 'active' : 'offline' },
+  ];
+
+  // Extract event log text
+  const getLogText = (entry: { action: string; observation?: string } | string): string => {
+    if (typeof entry === 'string') return entry;
+    return entry.action || 'Unknown event';
+  };
 
   return (
-    <div className="relative w-screen h-screen bg-[#020608] text-[#00d8ff] font-mono overflow-hidden select-none">
-      
-      {/* 3D Core Canvas */}
-      <div className="absolute inset-0 z-0">
-        <Canvas camera={{ position: [0, 0, 7], fov: 60 }}>
-          <ambientLight intensity={isWorking ? 1.5 : 0.5} />
-          <directionalLight position={[10, 10, 5]} intensity={2} color="#00ffff" />
-          <directionalLight position={[-10, -10, -5]} intensity={1} color="#0055ff" />
-          <Stars radius={100} depth={50} count={3000} factor={3} saturation={1} fade speed={isWorking ? 2 : 0.2} />
-          <HolographicCore active={isWorking} />
-          <OrbitControls 
-            enableZoom={false} 
-            enablePan={false}
-            autoRotate={true} 
-            autoRotateSpeed={0.5} 
-            maxPolarAngle={Math.PI/1.5}
-            minPolarAngle={Math.PI/3}
-          />
-        </Canvas>
-      </div>
+    <div className="relative w-screen h-screen overflow-hidden select-none" style={{ background: 'var(--bg-deep)' }}>
 
-      {/* Cyberpunk Vignette / Scanlines */}
-      <div className="absolute inset-0 z-0 pointer-events-none bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-transparent via-[#020608]/50 to-[#020608] opacity-90"></div>
-      <div className="absolute inset-0 z-0 pointer-events-none opacity-10 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0IiBoZWlnaHQ9IjQiPgo8cmVjdCB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9IjAuMSIvPgo8L3N2Zz4=')] mix-blend-overlay"></div>
+      {/* ── Background Layers ── */}
+      <div className="grid-bg" />
+      <div className="scanline animate-scan" />
 
-      {/* HUD Corners (J.A.R.V.I.S Style Brackets) */}
-      <div className={`absolute top-4 left-4 w-16 h-16 border-t-2 border-l-2 ${borderColor} opacity-60 z-10 pointer-events-none`}></div>
-      <div className={`absolute top-4 right-4 w-16 h-16 border-t-2 border-r-2 ${borderColor} opacity-60 z-10 pointer-events-none`}></div>
-      <div className={`absolute bottom-4 left-4 w-16 h-16 border-b-2 border-l-2 ${borderColor} opacity-60 z-10 pointer-events-none`}></div>
-      <div className={`absolute bottom-4 right-4 w-16 h-16 border-b-2 border-r-2 ${borderColor} opacity-60 z-10 pointer-events-none`}></div>
+      {/* ── HUD Corner Brackets (hidden on very small screens) ── */}
+      <div className="hud-corner tl hidden sm:block" />
+      <div className="hud-corner tr hidden sm:block" />
+      <div className="hud-corner bl hidden sm:block" />
+      <div className="hud-corner br hidden sm:block" />
 
-      {/* Main UI Layout */}
-      <div className="absolute inset-0 z-10 p-4 md:p-6 flex flex-col justify-between pointer-events-none overflow-hidden">
-        
-        {/* Top Header Row */}
-        <div className="flex flex-col md:flex-row justify-between items-start gap-4 md:gap-0 pointer-events-auto">
-          
-          {/* Left: System Identification */}
-          <div className={`backdrop-blur-md bg-black/40 border border-[#00d8ff]/30 p-4 w-full md:w-80 rounded-sm clip-beveled-tl ${glowColor}`}>
-            <div className="flex items-center justify-between border-b border-[#00d8ff]/30 pb-2 mb-2">
-              <h1 className="text-xl font-bold tracking-[0.2em] flex items-center gap-2">
-                <Target className="text-[#00d8ff] w-5 h-5 animate-[spin_4s_linear_infinite]" />
-                S.A.I. CORE
+      {/* ════════════════════════════════════════════════
+          MAIN UI
+          ════════════════════════════════════════════════ */}
+      <div className="absolute inset-0 z-10 flex flex-col p-2 sm:p-3 md:p-4 gap-2 sm:gap-3 overflow-y-auto overflow-x-hidden">
+
+        {/* ── TOP ROW ── */}
+        <div className="flex flex-wrap lg:flex-nowrap justify-between items-start gap-2 sm:gap-3 flex-shrink-0">
+
+          {/* System ID Panel */}
+          <div className="glass-panel p-3 sm:p-4 w-full sm:w-auto sm:min-w-[260px] lg:w-72 opacity-0 animate-fade-in-up stagger-1 order-1" style={{ animationFillMode: 'forwards' }}>
+            <div className="flex items-center justify-between mb-2 sm:mb-3 pb-2" style={{ borderBottom: '1px solid var(--border)' }}>
+              <h1 className="flex items-center gap-2" style={{ fontFamily: 'var(--font-display)', fontSize: '14px', fontWeight: 700, letterSpacing: '0.15em' }}>
+                <Zap size={14} style={{ color: 'var(--cyan)' }} className="animate-pulse" />
+                <span className="glow-text" style={{ color: 'var(--cyan)' }}>S.A.I.</span>
+                <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '10px' }}>CORE</span>
               </h1>
-              <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full animate-pulse ${state.status === 'online' ? 'bg-cyan-400 shadow-[0_0_8px_#00ffff]' : 'bg-red-500'}`}></span>
-                <span className="text-xs uppercase tracking-widest text-cyan-200">{state.status}</span>
+              <div className={`status-badge ${state.status}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${state.status === 'online' ? 'animate-pulse' : ''}`}
+                  style={{ background: state.status === 'online' ? 'var(--green)' : 'var(--red)', boxShadow: state.status === 'online' ? '0 0 6px var(--green)' : '0 0 6px var(--red)' }}
+                />
+                {state.status}
               </div>
             </div>
-            <div className="space-y-1">
-              <p className="text-[10px] tracking-widest text-[#00d8ff]/60">MODEL: ADVANCED NEURAL PROTOCOL</p>
-              <p className="text-[10px] tracking-widest text-[#00d8ff]/60">UPTIME: CONTINUOUS</p>
-              <p className="text-[10px] tracking-widest text-[#00d8ff]/60">SECURE LINK: ESTABLISHED</p>
-            </div>
-          </div>
-          
-          {/* Right: Telemetry Hub */}
-          <div className={`backdrop-blur-md bg-black/40 border border-[#00d8ff]/30 p-4 w-full md:w-80 rounded-sm clip-beveled-tr ${glowColor}`}>
-            <h2 className="text-[10px] uppercase tracking-widest text-[#00d8ff]/60 mb-3 border-b border-[#00d8ff]/30 pb-1">System Diagnostics</h2>
-            
-            <div className="space-y-4">
-              <div className="flex justify-between items-center group">
-                <div className="flex items-center gap-2"><Activity className="w-4 h-4 text-purple-400"/> <span className="text-xs tracking-wider">NEURAL LOAD</span></div>
-                <div className="text-sm font-bold text-white shadow-[#00d8ff] drop-shadow-md bg-[#00d8ff]/10 px-2 py-0.5 rounded border border-[#00d8ff]/20">{state.neural_load}</div>
-              </div>
-              
-              <div className="flex justify-between items-center">
-                <div className="flex items-center gap-2"><Cpu className="w-4 h-4 text-blue-400"/> <span className="text-xs tracking-wider">CPU THREADS</span></div>
-                <div className="text-sm font-bold text-white shadow-[#00d8ff] bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">{state.cpu_load}</div>
-              </div>
 
-              <div className="flex justify-between items-center">
-                <div className="flex items-center gap-2"><Network className="w-4 h-4 text-green-400"/> <span className="text-xs tracking-wider">SYS LATENCY</span></div>
-                <div className="text-sm font-bold text-white shadow-[#00d8ff] bg-green-500/10 px-2 py-0.5 rounded border border-green-500/20">{state.latency}</div>
-              </div>
+            <div className="flex flex-col gap-1">
+              {[
+                ['MODEL', 'ADVANCED NEURAL PROTO'],
+                ['UPTIME', formatUptime(uptime)],
+                ['SECURE LINK', 'ESTABLISHED'],
+              ].map(([label, val]) => (
+                <div key={label} className="flex justify-between items-center" style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.08em' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+                  <span style={{ color: 'var(--text-secondary)' }}>{val}</span>
+                </div>
+              ))}
             </div>
           </div>
 
-        </div>
+          {/* Center: Clock & Net Speed */}
+          <div className="hidden lg:flex items-center gap-6 opacity-0 animate-fade-in-up stagger-3 order-3 lg:order-2" style={{ animationFillMode: 'forwards' }}>
+            <div className="flex items-center gap-2" style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
+              <Clock size={13} style={{ color: 'var(--cyan)', opacity: 0.6 }} />
+              <span>{formatTime(currentTime)}</span>
+            </div>
+            <div className="flex items-center gap-2" style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)' }}>
+              <Wifi size={13} style={{ color: 'var(--green)', opacity: 0.6 }} />
+              <span>{state.net_speed || '0 KB/s'}</span>
+            </div>
+          </div>
 
-        {/* Center: Thought Tracker (The "Mind" of SAI) */}
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[90%] md:w-[70%] max-w-4xl flex flex-col items-center justify-center pointer-events-none z-0">
-          <div className={`relative backdrop-blur-sm bg-cyan-950/20 border-l-2 border-r-2 border-[#00d8ff]/50 px-4 md:px-12 py-4 md:py-6 w-full text-center shadow-[0_0_30px_rgba(0,216,255,0.1)] transition-all duration-300 ${isWorking ? 'scale-[1.02] md:scale-105' : 'scale-100'}`}>
-            
-            {/* Top and bottom decorative bracket lines */}
-            <div className="absolute top-0 left-1/4 right-1/4 h-[1px] bg-gradient-to-r from-transparent via-[#00d8ff] to-transparent"></div>
-            <div className="absolute bottom-0 left-1/4 right-1/4 h-[1px] bg-gradient-to-r from-transparent via-[#00d8ff] to-transparent"></div>
-
-            <ShieldAlert className={`w-8 h-8 mx-auto mb-4 opacity-50 ${isWorking ? 'animate-bounce text-white' : 'text-[#00d8ff]'}`} />
-            
-            <p className="text-sm tracking-[0.3em] text-[#00d8ff]/70 mb-2 uppercase">Current Cognitive Vector</p>
-            <h2 className="text-2xl sm:text-3xl font-light text-white drop-shadow-[0_0_10px_rgba(0,255,255,0.8)] leading-tight italic mb-6">
-              "{state.thought}"
-            </h2>
-            
-            <div className="inline-block bg-[#00d8ff]/10 border border-[#00d8ff]/40 rounded-full px-4 py-1 uppercase tracking-widest text-[#00d8ff] text-xs font-bold font-sans">
-              <span className="opacity-50 mr-2">ACTION:</span> {state.action}
+          {/* Telemetry Gauges */}
+          <div className="glass-panel p-3 sm:p-4 w-full sm:w-auto opacity-0 animate-fade-in-up stagger-2 order-2 lg:order-3" style={{ animationFillMode: 'forwards' }}>
+            <div className="section-label flex items-center gap-2">
+              <Activity size={10} style={{ color: 'var(--cyan)' }} />
+              SYSTEM DIAGNOSTICS
+            </div>
+            <div className="flex gap-3 sm:gap-5 items-start justify-center sm:justify-start flex-wrap sm:flex-nowrap">
+              <GaugeRing label="CPU" value={state.cpu_load} icon={<Cpu size={10} />} color="var(--cyan)" colorClass="" size={56} />
+              <GaugeRing label="RAM" value={state.neural_load} icon={<Activity size={10} />} color="var(--purple)" colorClass="purple" size={56} />
+              <GaugeRing label="DISK" value={state.latency} icon={<HardDrive size={10} />} color="var(--green)" colorClass="green" size={56} />
+              <GaugeRing label="TEMP" value={state.core_temp?.replace('°C', '%') || 'N/A'} icon={<Thermometer size={10} />} color="var(--amber)" colorClass="amber" size={56} />
             </div>
           </div>
         </div>
 
-        {/* Bottom Area: Console and Terminal */}
-        <div className="flex flex-col md:flex-row gap-4 md:gap-6 items-stretch md:items-end justify-between pointer-events-auto z-10 w-full mb-0">
-          
-          {/* Left: Terminal History */}
-          <div className="w-full md:w-1/3 min-h-32 h-40 md:h-56 bg-black/60 border border-[#00d8ff]/30 p-4 rounded-sm backdrop-blur-md font-mono text-[10px] leading-tight flex flex-col shadow-[0_0_15px_rgba(0,150,255,0.15)] clip-beveled-bl">
-            <div className="text-[#00d8ff] mb-2 pb-1 border-b border-[#00d8ff]/30 uppercase tracking-widest flex items-center gap-2">
-              <Terminal className="w-3 h-3" /> Event Log Stream
+        {/* ── MIDDLE ROW (flexible) ── */}
+        <div className="flex-1 flex flex-col md:flex-row gap-2 sm:gap-3 min-h-0">
+
+          {/* Left Column: Module Status + Vision Feed — Desktop only */}
+          <div className="w-full md:w-48 lg:w-56 flex-shrink-0 flex flex-col gap-2 sm:gap-3 hidden lg:flex">
+            {/* Modules */}
+            <div className="glass-panel p-3 opacity-0 animate-fade-in-up stagger-3" style={{ animationFillMode: 'forwards' }}>
+              <div className="section-label flex items-center gap-2">
+                <Settings size={10} style={{ color: 'var(--cyan)' }} />
+                MODULE STATUS
+              </div>
+              <ModuleStatus modules={modules} />
             </div>
-            
-            <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1 pr-2">
-              {state.history.length === 0 ? (
-                <div className="text-[#00d8ff]/40 italic">Awaiting system events...</div>
+
+            {/* Vision Feed */}
+            <div className="glass-panel p-3 flex-1 flex flex-col opacity-0 animate-fade-in-up stagger-5" style={{ animationFillMode: 'forwards' }}>
+              <div className="section-label flex items-center gap-2">
+                <Eye size={10} style={{ color: 'var(--cyan)' }} />
+                <span>VISION FEED</span>
+                <span className="ml-auto flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                  <span style={{ fontSize: '8px', color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>LIVE</span>
+                </span>
+              </div>
+              <div className="vision-feed flex-1">
+                <img
+                  src={`/${state.screenshot}?t=${Date.now()}`}
+                  alt="SAI Vision Feed"
+                  onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.2'; }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* ═══ CENTER COLUMN: 3D Core Box + Thought Panel ═══ */}
+          <div className="flex-1 flex flex-col gap-2 sm:gap-3 min-h-0 min-w-0">
+
+            {/* 3D Holographic Core — Dedicated Box */}
+            <div className="flex-1 glass-panel relative overflow-hidden opacity-0 animate-fade-in-up stagger-3"
+              style={{
+                animationFillMode: 'forwards',
+                minHeight: '200px',
+                borderColor: isWorking ? 'rgba(0, 229, 255, 0.35)' : 'var(--border)',
+                boxShadow: isWorking ? '0 0 30px rgba(0, 229, 255, 0.08), inset 0 0 40px rgba(0, 229, 255, 0.03)' : 'none',
+                transition: 'border-color 0.5s ease, box-shadow 0.5s ease',
+              }}
+            >
+              {/* HUD brackets inside the 3D box */}
+              <div className="absolute top-2 left-2 sm:top-3 sm:left-3 w-3 h-3 sm:w-4 sm:h-4 border-t border-l pointer-events-none z-20" style={{ borderColor: 'rgba(0,229,255,0.3)' }} />
+              <div className="absolute top-2 right-2 sm:top-3 sm:right-3 w-3 h-3 sm:w-4 sm:h-4 border-t border-r pointer-events-none z-20" style={{ borderColor: 'rgba(0,229,255,0.3)' }} />
+              <div className="absolute bottom-2 left-2 sm:bottom-3 sm:left-3 w-3 h-3 sm:w-4 sm:h-4 border-b border-l pointer-events-none z-20" style={{ borderColor: 'rgba(0,229,255,0.3)' }} />
+              <div className="absolute bottom-2 right-2 sm:bottom-3 sm:right-3 w-3 h-3 sm:w-4 sm:h-4 border-b border-r pointer-events-none z-20" style={{ borderColor: 'rgba(0,229,255,0.3)' }} />
+
+              {/* Label */}
+              <div className="absolute top-2 sm:top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 pointer-events-none"
+                style={{ fontFamily: 'var(--font-display)', fontSize: '7px', letterSpacing: '0.25em', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: isWorking ? 'var(--cyan)' : 'var(--text-muted)', boxShadow: isWorking ? '0 0 6px var(--cyan)' : 'none' }} />
+                NEURAL CORE {isWorking ? '• ACTIVE' : '• STANDBY'}
+              </div>
+
+              {/* The 3D Canvas */}
+              <Canvas camera={{ position: [0, 0, 7], fov: 55 }} style={{ position: 'absolute', inset: 0 }}>
+                <ambientLight intensity={isWorking ? 1.2 : 0.4} />
+                <directionalLight position={[10, 10, 5]} intensity={1.5} color="#00e5ff" />
+                <directionalLight position={[-10, -10, -5]} intensity={0.8} color="#7c4dff" />
+                <Stars radius={80} depth={60} count={2000} factor={3} saturation={0.8} fade speed={isWorking ? 1.5 : 0.15} />
+                <HolographicCore active={isWorking} cpuPercent={cpuPercent} />
+                <OrbitControls
+                  enableZoom={false}
+                  enablePan={false}
+                  autoRotate
+                  autoRotateSpeed={0.3}
+                  maxPolarAngle={Math.PI / 1.5}
+                  minPolarAngle={Math.PI / 3}
+                />
+              </Canvas>
+            </div>
+
+            {/* Thought / Cognitive Vector — Separate Panel Below */}
+            <div className="flex-shrink-0 glass-panel px-3 py-2 sm:px-5 sm:py-3 opacity-0 animate-fade-in-up stagger-5 relative"
+              style={{
+                animationFillMode: 'forwards',
+                borderColor: isWorking ? 'rgba(0, 229, 255, 0.3)' : 'var(--border)',
+                transition: 'border-color 0.3s ease',
+              }}
+            >
+              {/* Gradient accent lines */}
+              <div className="absolute top-0 left-[15%] right-[15%] h-px" style={{ background: 'linear-gradient(to right, transparent, var(--cyan), transparent)' }} />
+
+              <div className="flex flex-col sm:flex-row items-start gap-2 sm:gap-4">
+                {/* Left: label + action badge */}
+                <div className="flex flex-row sm:flex-col gap-1.5 flex-shrink-0 items-center sm:items-start sm:pt-0.5">
+                  <p style={{ fontFamily: 'var(--font-display)', fontSize: '8px', letterSpacing: '0.25em', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                    COGNITIVE VECTOR
+                  </p>
+                  <div className="inline-flex items-center gap-1.5 px-2 sm:px-3 py-1 rounded-full w-fit"
+                    style={{
+                      background: isWorking ? 'var(--cyan-dim)' : 'rgba(255,255,255,0.03)',
+                      border: `1px solid ${isWorking ? 'rgba(0,229,255,0.25)' : 'rgba(255,255,255,0.06)'}`,
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '8px',
+                      letterSpacing: '0.08em',
+                      color: isWorking ? 'var(--cyan)' : 'var(--text-muted)',
+                      transition: 'all 0.3s ease',
+                    }}
+                  >
+                    <span style={{ opacity: 0.5 }}>ACTION:</span>
+                    <span style={{ fontWeight: 600 }}>{state.action}</span>
+                    {isWorking && <Zap size={10} className="animate-pulse" />}
+                  </div>
+                </div>
+
+                {/* Right: thought text */}
+                <div className="flex-1 min-w-0 w-full sm:w-auto">
+                  <p className="thought-display"
+                    style={{
+                      fontFamily: 'var(--font-body)',
+                      fontSize: 'clamp(12px, 1.8vw, 18px)',
+                      fontWeight: 300,
+                      fontStyle: 'italic',
+                      color: '#fff',
+                      textShadow: '0 0 10px rgba(0, 229, 255, 0.3)',
+                      lineHeight: 1.5,
+                      overflow: 'hidden',
+                      display: '-webkit-box',
+                      WebkitLineClamp: 3,
+                      WebkitBoxOrient: 'vertical',
+                    }}
+                  >
+                    "{state.thought}"
+                    {isWorking && <span className="thought-cursor" />}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column: Event Log — hidden on small, shown md+ */}
+          <div className="w-full md:w-56 lg:w-72 flex-shrink-0 glass-panel p-3 flex flex-col opacity-0 animate-fade-in-up stagger-4 hidden md:flex"
+            style={{ animationFillMode: 'forwards' }}
+          >
+            <div className="section-label flex items-center gap-2">
+              <Terminal size={10} style={{ color: 'var(--cyan)' }} />
+              EVENT LOG STREAM
+            </div>
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 min-h-0">
+              {(!state.history || state.history.length === 0) ? (
+                <div className="event-entry" style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                  Awaiting system events...
+                </div>
               ) : (
-                state.history.map((log, i) => (
-                  <div key={i} className="animate-fade-in text-gray-300">
-                    <span className="text-[#00d8ff] opacity-60 mr-2">[{new Date().toISOString().substring(11,19)}]</span> {log}
+                state.history.slice(-50).map((entry, i) => (
+                  <div key={i} className="event-entry animate-fade-in flex items-start">
+                    <span className="timestamp">[{formatTime(currentTime)}]</span>
+                    <span className="event-text">{getLogText(entry)}</span>
                   </div>
                 ))
               )}
               <div ref={historyEndRef} />
             </div>
           </div>
+        </div>
 
-          {/* Right: Command Input */}
-          <div className="w-full md:w-2/3 h-auto md:h-16 bg-black/60 border border-[#00d8ff]/50 backdrop-blur-md rounded-sm p-4 relative clip-beveled-br">
-            {/* Corner decorations */}
-            <div className="absolute top-0 left-0 w-2 h-2 border-t border-l border-[#00d8ff]"></div>
-            <div className="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-[#00d8ff]"></div>
-
-            <form onSubmit={sendCommand} className="h-full flex flex-col md:flex-row gap-4 items-center justify-between">
-              <div className="hidden md:flex bg-[#00d8ff]/20 p-2 rounded text-[#00d8ff] items-center justify-center shrink-0">
-                <Command className="w-5 h-5" />
+        {/* ── Mobile-only: Compact Event Log (shown below 3D on small screens) ── */}
+        <div className="flex-shrink-0 md:hidden glass-panel p-3 opacity-0 animate-fade-in-up stagger-5" style={{ animationFillMode: 'forwards', maxHeight: '120px' }}>
+          <div className="section-label flex items-center gap-2">
+            <Terminal size={10} style={{ color: 'var(--cyan)' }} />
+            EVENT LOG
+          </div>
+          <div className="overflow-y-auto custom-scrollbar flex flex-col gap-0.5" style={{ maxHeight: '80px' }}>
+            {(!state.history || state.history.length === 0) ? (
+              <div className="event-entry" style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                Awaiting system events...
               </div>
-              
+            ) : (
+              state.history.slice(-10).map((entry, i) => (
+                <div key={i} className="event-entry animate-fade-in flex items-start">
+                  <span className="event-text">{getLogText(entry)}</span>
+                </div>
+              ))
+            )}
+            <div ref={!state.history?.length ? undefined : historyEndRef} />
+          </div>
+        </div>
+
+        {/* ── BOTTOM: Command Bar ── */}
+        <div className="flex-shrink-0 opacity-0 animate-fade-in-up stagger-6" style={{ animationFillMode: 'forwards' }}>
+          <form onSubmit={sendCommand} className="command-bar flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-4 px-3 sm:px-5 py-2 sm:py-3">
+            <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
+              <div className="flex items-center justify-center p-1.5 sm:p-2 rounded flex-shrink-0" style={{ background: 'var(--cyan-dim)' }}>
+                <Terminal size={16} style={{ color: 'var(--cyan)' }} />
+              </div>
+
               <input
                 type="text"
+                id="command-input"
                 value={cmdInput}
                 onChange={e => setCmdInput(e.target.value)}
-                placeholder="INPUT OVERRIDE DIRECTIVE //"
-                className="w-full relative flex-1 bg-[#00d8ff]/5 md:bg-transparent border md:border-none border-[#00d8ff]/30 p-3 md:p-0 outline-none text-base md:text-[1.1rem] text-white placeholder-[#00d8ff]/30 font-bold tracking-widest uppercase rounded md:rounded-none shrink"
+                placeholder="ENTER COMMAND //"
                 disabled={state.status !== 'online'}
                 autoComplete="off"
-                spellCheck="false"
+                spellCheck={false}
+                style={{ fontSize: '12px' }}
               />
-              
-              <button 
-                type="submit" 
-                disabled={!cmdInput.trim() || state.status !== 'online'}
-                className="w-full md:w-48 h-12 md:h-12 px-4 md:px-6 bg-[#00d8ff]/10 hover:bg-[#00d8ff]/30 text-[#00d8ff] hover:text-white border border-[#00d8ff]/40 hover:border-[#00d8ff] transition-all disabled:opacity-30 disabled:cursor-not-allowed group flex items-center justify-center gap-3 tracking-[0.2em] text-sm shrink-0 md:-my-1"
-              >
-                EXECUTE
-                <Zap className="w-4 h-4 group-hover:animate-pulse group-hover:drop-shadow-[0_0_5px_#fff]" />
-              </button>
-            </form>
-          </div>
+            </div>
 
+            <button
+              type="submit"
+              id="execute-btn"
+              disabled={!cmdInput.trim() || state.status !== 'online'}
+              className="command-btn flex items-center justify-center gap-2 w-full sm:w-auto"
+            >
+              EXECUTE
+              <Zap size={14} />
+            </button>
+          </form>
         </div>
       </div>
     </div>

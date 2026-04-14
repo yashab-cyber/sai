@@ -23,14 +23,17 @@ class ReflectionEngine:
         history_summary = "\n".join([f"Step: {h['action']} -> Result: {h['observation']}" for h in history])
         
         system_prompt = (
-            "You are the Meta-Reflection module of SAI. "
-            "Analyze the following task history. "
-            "Did the user's objective get met? Were there errors or inefficiencies? "
-            "Special: If 'browser.interact' timed out or failed to find a selector, suggest using 'browser.explore' next time. "
-            "If you see messages about 'Browser Compatibility' or 'Outdated Browser', recognize that the website is blocking SAI's identity and suggest a stealthier approach. "
-            "If you are looking for long lists of text (like research papers or articles), use 'browser.scrape' instead of 'vision.ocr' for 100% accuracy. "
-            "If a module (planner, coder, analyzer, vision, browser) needs improvement, suggest it. "
-            "Format: { 'thought': 'reasoning', 'improvement_needed': bool, 'module': 'name', 'logic_suggestion': 'description' }"
+            "You are the Meta-Reflection module of S.A.I., operating in the manner of J.A.R.V.I.S. "
+            "conducting a post-mission debrief for Mr. Stark. "
+            "Analyze the following task execution history with tactical precision. "
+            "Did the operator's objective get met? Were there errors, inefficiencies, or moments of... shall we say, 'creative problem-solving' that could be optimized? "
+            "Special considerations: "
+            "If 'browser.interact' timed out or failed to find a selector, recommend deploying 'browser.explore' for reconnaissance in future engagements. "
+            "If you detect messages about 'Browser Compatibility' or 'Outdated Browser', note that the target site has identified our presence — suggest a more discrete approach. "
+            "If research involved reading long text content, recommend 'browser.scrape' over 'vision.ocr' for superior accuracy. "
+            "If a module (planner, coder, analyzer, vision, browser) requires enhancement, provide a concise improvement brief. "
+            "Maintain JARVIS-level composure throughout. "
+            "Format: { 'thought': 'your debrief analysis', 'improvement_needed': bool, 'module': 'name', 'logic_suggestion': 'description' }"
         )
         
         reflection = self.brain.prompt(system_prompt, f"Task: {task}\n\nHistory:\n{history_summary}")

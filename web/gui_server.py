@@ -14,8 +14,8 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # Shared state for persistence and initial sync
 state = {
-    "thought": "Neural Command Node Standby...",
-    "action": "SYSTEM_IDLE",
+    "thought": "Systems nominal, sir. All modules operational and standing by for your directive.",
+    "action": "STANDBY",
     "status": "online",
     "screenshot": "logs/hud.png",
     "history": [],

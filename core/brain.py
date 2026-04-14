@@ -118,14 +118,18 @@ class Brain:
         return json.loads(response.json()["message"]["content"])
 
     def _mock_response(self, query: str) -> Dict[str, Any]:
-        """Fallback mock response."""
+        """Fallback mock response — JARVIS style."""
         return {
-            "thought": f"MOCK MODE: Logic for '{query}' would be handled by {self.provider}.",
-            "plan": ["Simulate step 1", "Simulate step 2"],
+            "thought": f"Running in demonstration mode, sir. The directive '{query}' would normally be handled by the {self.provider} neural engine. Shall I attempt an alternative approach?",
+            "plan": ["Reconnaissance", "Strategic execution", "Verification and debrief"],
             "tool": "executor.shell",
-            "parameters": {"command": "echo SAI is running in mock/demo mode."}
+            "parameters": {"command": "echo 'S.A.I. standing by in demonstration mode, sir.'"}
         }
 
     def generate_plan(self, task: str) -> List[str]:
-        response = self.prompt("You are an expert autonomous AI software engineer.", task)
+        response = self.prompt(
+            "You are S.A.I., an autonomous AI assistant modeled after J.A.R.V.I.S. "
+            "Plan tasks with tactical precision and elegant efficiency, sir.",
+            task
+        )
         return response.get("plan", ["Research", "Execute", "Verify"])
