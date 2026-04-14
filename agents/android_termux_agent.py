@@ -10,44 +10,90 @@ TOKEN = "jarvis_network_key"
 DEVICE_ID = "android_phone"
 
 
+def _scan_subnet_for_hub(port=5000, timeout=0.3):
+    """Scan local subnet for SAI Hub when mDNS fails."""
+    import socket
+    import concurrent.futures
+    
+    # Get our own IP to determine subnet
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(('8.8.8.8', 80))
+        my_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        return None
+    
+    subnet = '.'.join(my_ip.split('.')[:3])
+    print(f"[*] Scanning subnet {subnet}.0/24 for SAI Hub on port {port}...")
+    
+    def check_host(ip):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(timeout)
+            result = s.connect_ex((ip, port))
+            s.close()
+            if result == 0 and ip != my_ip:
+                return ip
+        except Exception:
+            pass
+        return None
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
+        futures = {executor.submit(check_host, f"{subnet}.{i}"): i for i in range(1, 255)}
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            if result:
+                return f"http://{result}:{port}"
+    return None
+
 def discover_hub():
     if HUB_URL != "auto":
         return HUB_URL
         
+    # Phase 1: Try mDNS
     print("[*] Searching for S.A.I. Hub (mDNS) on local network...")
     try:
         from zeroconf import Zeroconf, ServiceBrowser
         import threading
         import socket
         import time
+
+        found_url = []
+        
+        class MyListener:
+            def remove_service(self, zeroconf, type, name): pass
+            def update_service(self, zeroconf, type, name): pass
+            def add_service(self, zeroconf, type, name):
+                info = zeroconf.get_service_info(type, name)
+                if info:
+                    ip = socket.inet_ntoa(info.addresses[0])
+                    found_url.append(f"http://{ip}:{info.port}")
+
+        zc = Zeroconf()
+        browser = ServiceBrowser(zc, "_sai._tcp.local.", MyListener())
+        
+        timeout = 5
+        while not found_url and timeout > 0:
+            time.sleep(0.5)
+            timeout -= 0.5
+            
+        zc.close()
+        if found_url:
+            print(f"[+] Found S.A.I. Hub via mDNS: {found_url[0]}")
+            return found_url[0]
+            
+        print("[-] mDNS discovery timed out. Trying subnet scan...")
     except ImportError:
-        print("[-] zeroconf missing. Run: pip install zeroconf")
-        return "http://localhost:5000"
-
-    found_url = []
+        print("[-] zeroconf not available. Trying subnet scan...")
     
-    class MyListener:
-        def remove_service(self, zeroconf, type, name): pass
-        def add_service(self, zeroconf, type, name):
-            info = zeroconf.get_service_info(type, name)
-            if info:
-                ip = socket.inet_ntoa(info.addresses[0])
-                found_url.append(f"http://{ip}:{info.port}")
-
-    zc = Zeroconf()
-    browser = ServiceBrowser(zc, "_sai._tcp.local.", MyListener())
+    # Phase 2: Subnet scan fallback
+    hub = _scan_subnet_for_hub()
+    if hub:
+        print(f"[+] Found S.A.I. Hub via scan: {hub}")
+        return hub
     
-    timeout = 10
-    while not found_url and timeout > 0:
-        time.sleep(0.5)
-        timeout -= 0.5
-        
-    zc.close()
-    if found_url:
-        print(f"[+] Found S.A.I. Hub at: {found_url[0]}")
-        return found_url[0]
-        
-    print("[-] Auto-discovery timed out.")
+    print("[-] No SAI Hub found on network. Falling back to localhost.")
     return "http://localhost:5000"
 
 ACTUAL_HUB_URL = discover_hub()

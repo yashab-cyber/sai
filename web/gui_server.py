@@ -127,11 +127,28 @@ def run_gui(port=5000):
     
     # Panic Port Recovery: Forcefully reclaim the port if it's stuck
     try:
-        # Using fuser to kill the process on the port. Silent if no process found.
         subprocess.run(["fuser", "-k", f"{port}/tcp"], capture_output=True)
-        time.sleep(1) # Tiny grace period for OS to release resources
-    except Exception as e:
+        time.sleep(1)
+    except Exception:
         pass
+    
+    # Advertise via mDNS so agents can auto-discover the Hub
+    try:
+        from zeroconf import Zeroconf, ServiceInfo
+        import socket
+        local_ip = get_local_ip()
+        info = ServiceInfo(
+            "_sai._tcp.local.",
+            "SAI Hub._sai._tcp.local.",
+            addresses=[socket.inet_aton(local_ip)],
+            port=port,
+            properties={"version": "1.1.0"},
+        )
+        zc = Zeroconf()
+        zc.register_service(info)
+        logging.getLogger("SAI.GUI").info(f"mDNS service registered: _sai._tcp.local. at {local_ip}:{port}")
+    except Exception as e:
+        logging.getLogger("SAI.GUI").debug(f"mDNS registration skipped: {e}")
         
     socketio.run(app, host='0.0.0.0', port=port, log_output=False)
 
