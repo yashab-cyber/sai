@@ -103,7 +103,33 @@ def on_execute(data):
         
     sio.emit('agent_response', {"command_id": command_id, "response": response}, namespace='/agent')
 
+
+import base64
+import threading
+
+def vision_loop():
+    print("[*] Vision stream started...")
+    tmp_path = "/data/data/com.termux/files/usr/tmp/screencap.png"
+    while True:
+        if sio.connected:
+            try:
+                # Try getting screencap. Often requires rooted Termux.
+                res = subprocess.run(["su", "-c", f"screencap -p {tmp_path}"], capture_output=True)
+                if res.returncode != 0: # fallback
+                    res = subprocess.run(["screencap", "-p", tmp_path], capture_output=True)
+                
+                if os.path.exists(tmp_path):
+                    with open(tmp_path, "rb") as f:
+                        b64 = base64.b64encode(f.read()).decode()
+                    sio.emit('vision_stream', {"device_id": DEVICE_ID, "frame": b64}, namespace='/agent')
+            except Exception as e:
+                pass
+        time.sleep(3)  # Mobile network optimization
+
+threading.Thread(target=vision_loop, daemon=True).start()
+
 if __name__ == "__main__":
+
     while True:
         try:
             print(f"[*] Connecting to {ACTUAL_HUB_URL}")

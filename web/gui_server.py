@@ -93,7 +93,20 @@ def handle_agent_connect(auth):
         
     return {"status": "success", "message": "Welcome to SAI Hub."}
 
+
+@socketio.on('vision_stream', namespace='/agent')
+def handle_vision_stream(data):
+    device_id = data.get("device_id")
+    frame_b64 = data.get("frame")
+    if device_id and frame_b64:
+        sai = app.config.get('SAI_INSTANCE')
+        if hasattr(sai, 'device_manager'):
+            sai.device_manager.latest_frames[device_id] = frame_b64
+            # Forward the frame to the frontend for real-time monitoring
+            socketio.emit('device_vision_update', {"device_id": device_id, "frame": frame_b64}, namespace='/')
+
 @socketio.on('agent_response', namespace='/agent')
+
 def handle_agent_response(data):
     if sai_instance and hasattr(sai_instance, 'device_manager'):
         sai_instance.device_manager.resolve_command(data.get("command_id"), data.get("response"))

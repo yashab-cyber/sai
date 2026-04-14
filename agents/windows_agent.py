@@ -139,7 +139,33 @@ def on_execute(data):
     print(f"[<] Sending Response: {response['status']}")
     sio.emit('agent_response', {"command_id": command_id, "response": response}, namespace='/agent')
 
+
+import traceback
+import threading
+import io
+import base64
+
+def vision_loop():
+    print("[*] Vision stream started...")
+    while True:
+        if sio.connected:
+            try:
+                if pyautogui:
+                    img = pyautogui.screenshot()
+                    # Resize to compress bandwidth (e.g. 1024x768 max)
+                    img.thumbnail((1024, 768))
+                    buf = io.BytesIO()
+                    img.save(buf, format='JPEG', quality=65)
+                    b64 = base64.b64encode(buf.getvalue()).decode()
+                    sio.emit('vision_stream', {"device_id": DEVICE_ID, "frame": b64}, namespace='/agent')
+            except Exception as e:
+                pass
+        time.sleep(2)  # Stream at 1 frame per 2 seconds
+
+threading.Thread(target=vision_loop, daemon=True).start()
+
 if __name__ == "__main__":
+
     while True:
         try:
             print(f"[*] Attempting to connect to {HUB_URL}...")
