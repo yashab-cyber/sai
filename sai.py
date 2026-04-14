@@ -104,9 +104,12 @@ class SAI:
         )
 
     def run_task(self, task: str, max_iterations=25):
-        """Standardizes autonomous execution loop with thread-safe perception."""
+        """Standardizes autonomous execution loop with thread-safe perception and stuck-loop detection."""
         print(f"\n[S.A.I.] Very good, sir. Initializing directive: {task}")
         history = []
+        _consecutive_fails = 0
+        _last_action_key = None
+        
         try:
             for i in range(max_iterations):
                 print(f"  [Processing] Tactical iteration {i+1}, sir...")
@@ -138,6 +141,23 @@ class SAI:
                     
                 if not tool_name:
                     print("⚠️ No further action required at this time, sir.")
+                    break
+
+                # ── Stuck-Loop Detection ──
+                action_key = f"{tool_name}:{sorted(params.items()) if isinstance(params, dict) else params}"
+                if action_key == _last_action_key:
+                    _consecutive_fails += 1
+                else:
+                    _consecutive_fails = 0
+                _last_action_key = action_key
+                
+                if _consecutive_fails >= 3:
+                    print("⚠️  Sir, I appear to be caught in a loop — repeating the same action without progress.")
+                    print("    I'd recommend we reassess the approach. Breaking tactical loop.")
+                    self.gui.update(
+                        thought="I've detected a tactical loop, sir. The same action has failed 3 consecutive times. Awaiting new directive.",
+                        action="LOOP_BREAK"
+                    )
                     break
 
                 # 2. Execute Action

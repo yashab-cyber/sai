@@ -73,14 +73,25 @@ class Executor:
             return {"status": "error", "message": str(e)}
 
     def delete_file(self, path: str) -> Dict[str, Any]:
-        """Deletes a file or directory after path validation."""
+        """Deletes a file, or clears all contents of a directory (preserving the directory itself)."""
         try:
             safe_path = self.safety.validate_path(path)
             if os.path.isdir(safe_path):
-                shutil.rmtree(safe_path)
-            else:
+                # Clear contents but keep the directory — prevents "directory not found" loops
+                deleted_count = 0
+                for item in os.listdir(safe_path):
+                    item_path = os.path.join(safe_path, item)
+                    if os.path.isdir(item_path):
+                        shutil.rmtree(item_path)
+                    else:
+                        os.remove(item_path)
+                    deleted_count += 1
+                return {"status": "success", "message": f"Cleared {deleted_count} items from {path}. Directory preserved."}
+            elif os.path.exists(safe_path):
                 os.remove(safe_path)
-            return {"status": "success"}
+                return {"status": "success", "message": f"Deleted file: {path}"}
+            else:
+                return {"status": "error", "message": f"Path not found: {path}"}
         except Exception as e:
             return {"status": "error", "message": str(e)}
             
