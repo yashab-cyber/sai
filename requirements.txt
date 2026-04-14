@@ -17,3 +17,4 @@ numpy
 pyttsx3
 SpeechRecognition
 pytesseract
+flask-cors
