@@ -10,15 +10,33 @@ from typing import Dict, Any, Optional, Callable
 
 @contextmanager
 def silence_stderr():
-    """Context manager to suppress stderr noise from ALSA/Jack libraries."""
+    """Context manager to suppress stderr noise from ALSA/Jack libraries.
+    
+    This suppresses BOTH Python-level sys.stderr AND C-level fd 2 writes,
+    which is necessary because PortAudio/ALSA write errors directly via
+    the OS file descriptor, bypassing Python's sys.stderr entirely.
+    """
     new_target = open(os.devnull, 'w')
     old_target = sys.stderr
+    old_fd = os.dup(2)           # Save the real fd 2
     sys.stderr = new_target
+    os.dup2(new_target.fileno(), 2)  # Redirect C-level stderr to /dev/null
     try:
         yield new_target
     finally:
+        os.dup2(old_fd, 2)       # Restore C-level stderr
+        os.close(old_fd)
         sys.stderr = old_target
         new_target.close()
+
+def _probe_microphone() -> bool:
+    """Check if any microphone/capture device is available."""
+    try:
+        with silence_stderr():
+            mic_list = sr.Microphone.list_microphone_names()
+            return len(mic_list) > 0
+    except Exception:
+        return False
 
 class VoiceManager:
     """
@@ -32,6 +50,10 @@ class VoiceManager:
         self.is_busy = False
         self.stop_trigger = False
         self.trigger_thread = None
+        self.mic_available = _probe_microphone()
+        
+        if not self.mic_available:
+            self.logger.warning("No microphone detected, sir. Voice input features disabled.")
         
         try:
             with silence_stderr():
@@ -78,6 +100,9 @@ class VoiceManager:
 
     def listen(self, timeout: int = 5, phrase_time_limit: Optional[int] = None):
         """Listens for audio input and converts to text."""
+        if not self.mic_available:
+            return {"status": "error", "message": "No microphone detected."}
+        
         self.is_busy = True
         try:
             recognizer = sr.Recognizer()
@@ -105,6 +130,10 @@ class VoiceManager:
 
     def start_voice_trigger(self, callback: Callable[[str], None]):
         """Starts background wake-word detection."""
+        if not self.mic_available:
+            self.logger.info("Voice trigger skipped — no microphone available, sir.")
+            return
+        
         if self.trigger_thread and self.trigger_thread.is_alive():
             return
             

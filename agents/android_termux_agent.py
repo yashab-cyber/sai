@@ -65,12 +65,21 @@ def run_termux_cmd(parts):
 
 @sio.event(namespace='/agent')
 def connect():
-    print("[+] Connected. Authenticating...")
+    print("[+] Connected to SAI Hub. Authenticating...")
     sio.emit('agent_connect', {
         "token": TOKEN,
         "device_id": DEVICE_ID,
         "device_type": "android"
     }, namespace='/agent')
+    print(f"[+] Authenticated as '{DEVICE_ID}'. Listening for commands...")
+
+@sio.event(namespace='/agent')
+def connect_error(data):
+    print(f"[-] Connection error: {data}")
+
+@sio.event(namespace='/agent')
+def disconnect():
+    print("[-] Disconnected from SAI Hub.")
 
 @sio.on('execute', namespace='/agent')
 def on_execute(data):
@@ -82,9 +91,17 @@ def on_execute(data):
     response = {}
     
     if command == "open_app":
-        # Open WhatsApp or Spotify using intents
+        # Open any app by package name using monkey (universal launcher)
         pkg = params.get("package", "com.whatsapp")
-        response = run_termux_cmd(["am", "start", "-n", f"{pkg}/.Main"])
+        response = run_termux_cmd([
+            "am", "start", 
+            "-a", "android.intent.action.MAIN",
+            "-c", "android.intent.category.LAUNCHER",
+            "-n", f"{pkg}"
+        ])
+        # Fallback: use monkey if component-based launch fails
+        if response.get("status") != "success" or "Error" in response.get("stdout", ""):
+            response = run_termux_cmd(["monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1"])
         
     elif command == "battery":
         response = run_termux_cmd(["termux-battery-status"])

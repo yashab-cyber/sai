@@ -88,6 +88,7 @@ def handle_agent_connect(auth):
             return {"status": "error", "message": "IP Address not whitelisted"}
             
     agent_sessions[device_id] = request.sid
+    logging.getLogger("SAI.GUI").debug(f"AGENT_CONNECT: {device_id} mapped to SID={request.sid}")
     if sai_instance and hasattr(sai_instance, 'device_manager'):
         sai_instance.device_manager.register_device(device_id, device_type, ip_addr)
         
@@ -183,12 +184,15 @@ class GUIManager:
         if hasattr(self.sai, 'device_manager'):
             def _dispatch(device_id, command_id, command, params):
                 sid = agent_sessions.get(device_id)
+                self.logger.debug(f"DISPATCH: device={device_id}, sid={sid}, cmd={command}, all_sessions={agent_sessions}")
                 if sid:
                     socketio.emit("execute", {
                         "command_id": command_id,
                         "command": command,
                         "params": params
-                    }, room=sid, namespace='/agent')
+                    }, to=sid, namespace='/agent')
+                    socketio.sleep(0)  # Yield to eventlet so the packet flushes
+                    self.logger.debug(f"DISPATCH: emit sent for {command_id}")
                 else:
                     raise Exception(f"No active socket session for {device_id}")
             self.sai.device_manager.on_command_dispatch = _dispatch
