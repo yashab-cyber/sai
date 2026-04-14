@@ -23,6 +23,9 @@ from modules.evolution import EvolutionEngine
 from modules.control import ControlManager
 from modules.vision import VisionManager
 from modules.interaction import InteractionEngine
+from modules.state_manager import StateManager
+from modules.command_router import CommandRouter
+from modules.feedback_loop import FeedbackLoop
 from modules.voice import VoiceManager
 from web.dashboard import DashboardManager
 from modules.browser import BrowserManager
@@ -67,6 +70,11 @@ class SAI:
         self.control = ControlManager(self.executor)
         self.vision = VisionManager(sai_instance=self)
         self.interaction = InteractionEngine(self)
+        self.state_manager = StateManager()
+        self.command_router = CommandRouter(self)
+        self.feedback_loop = FeedbackLoop(self)
+
+
         self.voice = VoiceManager(self)
         self.dashboard = DashboardManager()
         browser_config = self.config.get('browser', {})

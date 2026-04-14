@@ -21,14 +21,14 @@ class InteractionEngine:
         dtype = device_info.get("type", "unknown")
         
         if dtype == "windows":
-            return self.sai.device_manager.queue_command(
+            return self.sai.device_manager.route_command(
                 device_id, "mouse_click", {"button": "left", "x": x, "y": y}
             )
         elif dtype == "android":
             # For Termux we can use 'shell' with input tap if device has root/adb access
             cmd = f"su -c input tap {x} {y}"
             # Fallback to non-su if needed, but input tap usually requires su or ADB shell
-            return self.sai.device_manager.queue_command(
+            return self.sai.device_manager.route_command(
                 device_id, "shell", {"cmd": cmd}
             )
         else:
@@ -43,14 +43,14 @@ class InteractionEngine:
         dtype = device_info.get("type", "unknown")
         
         if dtype == "windows":
-            return self.sai.device_manager.queue_command(
+            return self.sai.device_manager.route_command(
                 device_id, "type_text", {"text": text}
             )
         elif dtype == "android":
             # Android input text needs escaping spaces
             # safe_text = text.replace(" ", "%s")
             cmd = f'su -c input text "{text}"'
-            return self.sai.device_manager.queue_command(
+            return self.sai.device_manager.route_command(
                 device_id, "shell", {"cmd": cmd}
             )
         else:

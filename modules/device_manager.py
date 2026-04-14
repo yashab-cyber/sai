@@ -21,6 +21,7 @@ class DeviceManager:
     def __init__(self):
         self.logger = logging.getLogger("SAI.DeviceManager")
         self.devices: Dict[str, Dict[str, Any]] = {}
+        self.latest_frames = {}
         self.pending_commands: Dict[str, Dict[str, Any]] = {}
         self.command_queues: Dict[str, list] = {}  # Task execution pipeline queue
         self.lock = threading.Lock()
