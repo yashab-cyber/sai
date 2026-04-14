@@ -22,3 +22,7 @@ black
 flake8
 python-socketio
 
+
+zeroconf
+
+zeroconf

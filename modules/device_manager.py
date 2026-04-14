@@ -1,4 +1,12 @@
+
 import logging
+
+try:
+    from modules.device_plugins.windows_plugin import WindowsDevicePlugin
+    from modules.device_plugins.android_plugin import AndroidDevicePlugin
+except ImportError:
+    pass
+
 import threading
 import time
 import uuid

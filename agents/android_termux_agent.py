@@ -9,6 +9,49 @@ HUB_URL = "http://192.168.1.10:5000"  # Replace with actual Pi/Hub IP
 TOKEN = "jarvis_network_key"
 DEVICE_ID = "android_phone"
 
+
+def discover_hub():
+    if HUB_URL != "auto":
+        return HUB_URL
+        
+    print("[*] Searching for S.A.I. Hub (mDNS) on local network...")
+    try:
+        from zeroconf import Zeroconf, ServiceBrowser
+        import threading
+        import socket
+        import time
+    except ImportError:
+        print("[-] zeroconf missing. Run: pip install zeroconf")
+        return "http://localhost:5000"
+
+    found_url = []
+    
+    class MyListener:
+        def remove_service(self, zeroconf, type, name): pass
+        def add_service(self, zeroconf, type, name):
+            info = zeroconf.get_service_info(type, name)
+            if info:
+                ip = socket.inet_ntoa(info.addresses[0])
+                found_url.append(f"http://{ip}:{info.port}")
+
+    zc = Zeroconf()
+    browser = ServiceBrowser(zc, "_sai._tcp.local.", MyListener())
+    
+    timeout = 10
+    while not found_url and timeout > 0:
+        time.sleep(0.5)
+        timeout -= 0.5
+        
+    zc.close()
+    if found_url:
+        print(f"[+] Found S.A.I. Hub at: {found_url[0]}")
+        return found_url[0]
+        
+    print("[-] Auto-discovery timed out.")
+    return "http://localhost:5000"
+
+ACTUAL_HUB_URL = discover_hub()
+
 sio = socketio.Client()
 
 def run_termux_cmd(parts):
@@ -64,7 +107,7 @@ if __name__ == "__main__":
     while True:
         try:
             print(f"[*] Connecting to {HUB_URL}")
-            sio.connect(HUB_URL, namespaces=['/agent'])
+            sio.connect(ACTUAL_HUB_URL, namespaces=['/agent'])
             sio.wait()
         except socketio.exceptions.ConnectionError:
             time.sleep(5)

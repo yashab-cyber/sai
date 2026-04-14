@@ -13,13 +13,60 @@ except ImportError:
     print("    Run: pip install pyautogui")
     pyautogui = None
 
-HUB_URL = "http://localhost:5000"  # Change to the Hub's IP
+HUB_URL = "auto"  # Set to "auto" for mDNS discovery, or specify hard IP like "http://192.168.1.5:5000"
 TOKEN = "jarvis_network_key"
 DEVICE_ID = f"windows_{getpass.getuser()}"
 
 print(f"[*] Starting S.A.I. Windows Agent as '{DEVICE_ID}'")
 
 # Initialize SocketIO Client
+
+def discover_hub():
+    if HUB_URL != "auto":
+        return HUB_URL
+        
+    print("[*] S.A.I. Hub URL set to 'auto'. Searching via mDNS/Zeroconf...")
+    try:
+        from zeroconf import Zeroconf, ServiceBrowser
+        import threading
+    except ImportError:
+        print("[-] zeroconf not installed. Please 'pip install zeroconf' to use auto-discovery.")
+        return "http://localhost:5000"
+        
+    found_url = []
+    
+    class MyListener:
+        def remove_service(self, zeroconf, type, name):
+            pass
+        def add_service(self, zeroconf, type, name):
+            info = zeroconf.get_service_info(type, name)
+            if info:
+                ip = socket.inet_ntoa(info.addresses[0])
+                port = info.port
+                found_url.append(f"http://{ip}:{port}")
+
+    zeroconf = Zeroconf()
+    listener = MyListener()
+    browser = ServiceBrowser(zeroconf, "_sai._tcp.local.", listener)
+    
+    # Wait 5 seconds for discovery
+    timeout = 10
+    import socket
+    while not found_url and timeout > 0:
+        time.sleep(0.5)
+        timeout -= 0.5
+        
+    zeroconf.close()
+    
+    if found_url:
+        print(f"[+] Found S.A.I. Hub at: {found_url[0]}")
+        return found_url[0]
+        
+    print("[-] Auto-discovery timed out. Falling back to localhost.")
+    return "http://localhost:5000"
+
+ACTUAL_HUB_URL = discover_hub()
+
 sio = socketio.Client()
 
 @sio.event(namespace='/agent')
@@ -96,7 +143,7 @@ if __name__ == "__main__":
     while True:
         try:
             print(f"[*] Attempting to connect to {HUB_URL}...")
-            sio.connect(HUB_URL, namespaces=['/agent'])
+            sio.connect(ACTUAL_HUB_URL, namespaces=['/agent'])
             sio.wait()
         except socketio.exceptions.ConnectionError:
             print("[-] Connection failed. Retrying in 5 seconds...")
