@@ -22,6 +22,7 @@ from core.brain import Brain
 from modules.evolution import EvolutionEngine
 from modules.control import ControlManager
 from modules.vision import VisionManager
+from modules.interaction import InteractionEngine
 from modules.voice import VoiceManager
 from web.dashboard import DashboardManager
 from modules.browser import BrowserManager
@@ -64,7 +65,8 @@ class SAI:
         # Initialize Evolution
         self.evolution = EvolutionEngine(self.executor, self.memory, self.coder)
         self.control = ControlManager(self.executor)
-        self.vision = VisionManager()
+        self.vision = VisionManager(sai_instance=self)
+        self.interaction = InteractionEngine(self)
         self.voice = VoiceManager(self)
         self.dashboard = DashboardManager()
         browser_config = self.config.get('browser', {})
