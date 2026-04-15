@@ -10,7 +10,7 @@ app = Flask(__name__)
 CORS(app)
 # Allow CORS and provide a secret key for session/socket security
 app.config['SECRET_KEY'] = 'sai-ultra-secret'
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # Shared state for persistence and initial sync
 state = {

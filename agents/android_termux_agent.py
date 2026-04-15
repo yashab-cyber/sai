@@ -106,7 +106,7 @@ def run_termux_cmd(parts):
     try:
         # Use shell=True for single string commands, or list for parts
         is_shell = isinstance(parts, str)
-        res = subprocess.run(parts, capture_output=True, text=True, shell=is_shell)
+        res = subprocess.run(parts, capture_output=True, text=True, shell=is_shell, timeout=15)
         
         status = "success" if res.returncode == 0 else "error"
         return {
