@@ -1,5 +1,5 @@
 import threading
-from playwright.sync_api import sync_playwright
+from playwright.async_api import async_playwright
 import logging
 from typing import Dict, Any, Optional
 
