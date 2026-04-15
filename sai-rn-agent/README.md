@@ -1,97 +1,71 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# SAI React Native Agent
 
-# Getting Started
+The SAI React Native Agent completely replaces the deprecated `Termux:API`. It runs natively on your Android phone and exposes a silent HTTP server in the background (on Port 8080) that allows the Python SAI Brain to natively tap, type, read the screen, and open apps without ROOT access.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+---
 
-## Step 1: Start Metro
+## 🛠️ Step 1: Install the Android Application
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+You can install the compiled `.apk` onto your phone directly via your Kali Linux terminal.
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+**Option A: Direct Install via USB (ADB)**
+1. Connect your Android phone to Kali Linux using a USB cable.
+2. Ensure you have **USB Debugging** enabled in `Settings -> Developer Options` on your phone.
+3. Install the app via Android Debug Bridge (ADB):
 
-```sh
-# Using npm
-npm start
-
-# OR using Yarn
-yarn start
+```bash
+adb install android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## Step 2: Build and run your app
+**Option B: Manual Transfer**
+Just copy the `app-debug.apk` file from your Kali Linux terminal `android/app/build/outputs/apk/debug/app-debug.apk` to your phone's download folder and tap it to install.
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+---
 
-### Android
+## ⚙️ Step 2: Configure the App Permissions
 
-```sh
-# Using npm
-npm run android
+Once the **SAI Companion Agent** is installed on your phone:
 
-# OR using Yarn
-yarn android
+1. Open the "SAI Companion Agent" app.
+2. Tap the button reading: **Enable Accessibility Service**
+3. This opens your phone's system settings. Scroll down to *Installed Apps -> SAI Companion Agent Accessibility Router* and toggle it **ON**.
+   *(This gives the app permission to "see" UI elements and simulate screen taps programmatically).*
+4. Go back to the SAI App, and verify the Accessibility Status says "Enabled".
+5. Finally, tap the **Start API** button. 
+   *(Your phone is now silently listening on port `8080` for SAI Python scripts to send it instructions).*
+
+---
+
+## 🔌 Step 3: Run the SAI Python Brain
+
+On your computer (Kali/Ubuntu/Codespace), run the main S.A.I hub and python automation scripts safely.
+
+Because you are likely connecting your laptop to your Android phone's Mobile Hotspot, the Agent handles network routing gracefully (such as automatically searching your `10.x.x.x` blocks).
+
+Start the main Python script on your laptop as you normally would:
+
+```bash
+python3 sai.py
 ```
 
-### iOS
+**(Optional) Test It Directly:**
+You can manually trigger actions on your phone straight from Python:
 
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
+```python
+from modules.device_plugins.android_companion import DeviceControl
 
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
+control = DeviceControl()
 
-```sh
-bundle install
+# Simulates a finger tapping at the x=500, y=500 pixel coordinate
+control.tap(500, 500)
+
+# Extracts all the words currently readable on the Android screen natively
+screen_content = control.get_screen_text()
+print(screen_content)
+
+# Simulates typing text instantly into whichever input box is currently selected
+control.type("Hello from SAI AI!")
+
+# Opens YouTube immediately
+control.open_app("com.google.android.youtube")
 ```
-
-Then, and every time you update your native dependencies, run:
-
-```sh
-bundle exec pod install
-```
-
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
-
-```sh
-# Using npm
-npm run ios
-
-# OR using Yarn
-yarn ios
-```
-
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
-
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
-
-## Step 3: Modify your app
-
-Now that you have successfully run the app, let's make changes!
-
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
-
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
-
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
-
-## Congratulations! :tada:
-
-You've successfully run and modified your React Native App. :partying_face:
-
-### Now what?
-
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
