@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">saicompanion</string>
+    <string name="accessibility_service_description">SAI Companion Agent Accessibility Router</string>
+</resources>
