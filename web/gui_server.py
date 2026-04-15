@@ -48,8 +48,12 @@ def handle_command():
     data = request.json
     command = data.get("command")
     if command and sai_instance:
+        def _run_async_wrapper():
+            import asyncio
+            asyncio.run(sai_instance.run_task(command))
+
         # Start the task in a separate thread so the GUI doesn't block
-        thread = threading.Thread(target=sai_instance.run_task, args=(command,), daemon=True)
+        thread = threading.Thread(target=_run_async_wrapper, daemon=True)
         thread.start()
         return jsonify({"status": "success", "message": f"Task '{command}' initiated."})
     return jsonify({"status": "error", "message": "No command or SAI instance found."}), 400

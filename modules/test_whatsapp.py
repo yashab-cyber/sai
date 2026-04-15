@@ -1,30 +1,37 @@
 from modules.browser import BrowserManager
 import asyncio
+import sys
 
-def send_whatsapp_message(recipient, message):
-    async def main():
-        browser_manager = BrowserManager(headless=False)
-        page = browser_manager.navigate('https://web.whatsapp.com')
+async def send_whatsapp_message(recipient, message):
+    browser_manager = BrowserManager(headless=False)
+    
+    print("Navigating to WhatsApp Web...")
+    await browser_manager.navigate('https://web.whatsapp.com')
 
-        # Wait for user to scan QR code manually
-        page.wait_for_selector("[aria-label='Search or start new chat']")
+    # Wait for user to scan QR code manually
+    print("Waiting for session... (Please scan QR code if necessary)")
+    await browser_manager.wait_for("[aria-label='Search or start new chat']", state="visible")
 
-        # Search for recipient
-        search_box = page.query_selector("[aria-label='Search or start new chat']")
-        search_box.click()
-        page.keyboard.type(recipient)
-        page.keyboard.press('Enter')
+    # Search for recipient
+    print(f"Searching for {recipient}...")
+    await browser_manager.click("[aria-label='Search or start new chat']")
+    await browser_manager.type_text("[aria-label='Search or start new chat']", recipient)
+    await browser_manager.press_key(None, 'Enter')
 
-        # Type and send the message
-        message_box = page.query_selector("[aria-label^='Type a message']")
-        message_box.click()
-        page.keyboard.type(message)
-        page.keyboard.press('Enter')
+    # Type and send the message
+    print(f"Sending message to {recipient}...")
+    await browser_manager.wait_for("div[contenteditable='true'][role='textbox'][title^='Type a message']", state="visible")
+    await browser_manager.type_text("div[contenteditable='true'][role='textbox'][title^='Type a message']", message)
+    await browser_manager.press_key(None, 'Enter')
 
-        # Clean up
-        await browser_manager.close()
+    print("Success! Message sent.")
+    
+    # Wait a bit before closing
+    await asyncio.sleep(2)
+    # Clean up
+    await browser_manager.close()
 
-    asyncio.run(main())
-
-# Example use
-send_whatsapp_message('Dad', 'Hello, this is a test message from S.A.I.')
+if __name__ == "__main__":
+    recipient = sys.argv[1] if len(sys.argv) > 1 else 'Dad'
+    message = sys.argv[2] if len(sys.argv) > 2 else 'Hello, this is a test message from S.A.I.'
+    asyncio.run(send_whatsapp_message(recipient, message))

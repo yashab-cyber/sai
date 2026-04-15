@@ -1,13 +1,12 @@
-import threading
-from playwright.async_api import async_playwright
+import asyncio
 import logging
+from playwright.async_api import async_playwright
 from typing import Dict, Any, Optional
 
 class BrowserManager:
     """
-    Autonomous Browser Control module using Playwright.
+    Autonomous Browser Control module using Playwright (Asynchronous).
     Supports navigation, interaction, and visual analysis.
-    Uses threading.local to ensure thread-safety in multi-threaded environments.
     """
     
     def __init__(self, headless: bool = True, timeout: int = 30000, locale: str = "en-US", timezone: str = "UTC"):
@@ -16,145 +15,136 @@ class BrowserManager:
         self.timeout = timeout
         self.locale = locale
         self.timezone = timezone
-        # Use thread-local storage to prevent "cannot switch to a different thread" errors
-        self._local = threading.local()
+        
+        self.playwright = None
+        self.browser = None
+        self.context = None
+        self.page = None
 
-    def _get_local_state(self):
-        """Returns the thread-local state, initializing if necessary."""
-        if not hasattr(self._local, 'playwright'):
-            self._local.playwright = None
-            self._local.browser = None
-            self._local.context = None
-            self._local.page = None
-        return self._local
-
-    def _ensure_browser(self):
-        """Lazy initialization of the browser for the current thread."""
-        state = self._get_local_state()
-        if not state.playwright:
-            self.logger.info(f"Initializing Playwright for thread {threading.current_thread().name}")
-            state.playwright = sync_playwright().start()
-            state.browser = state.playwright.chromium.launch(headless=self.headless)
+    async def _ensure_browser(self):
+        """Lazy initialization of the browser."""
+        if not self.playwright:
+            self.logger.info("Initializing Async Playwright")
+            self.playwright = await async_playwright().start()
+            self.browser = await self.playwright.chromium.launch(headless=self.headless)
             
-            # Use a modern human identity to bypass bot detection (e.g. Chrome 123 on Linux)
+            # Use a modern human identity to bypass bot detection
             user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
             
-            state.context = state.browser.new_context(
+            self.context = await self.browser.new_context(
                 viewport={'width': 1280, 'height': 720},
                 user_agent=user_agent,
                 locale=self.locale,
                 timezone_id=self.timezone
             )
-            state.page = state.context.new_page()
-            state.page.set_default_timeout(self.timeout)
+            self.page = await self.context.new_page()
+            self.page.set_default_timeout(self.timeout)
 
-    def navigate(self, url: str):
+    async def navigate(self, url: str):
         """Navigates to a URL."""
         try:
-            self._ensure_browser()
-            state = self._get_local_state()
+            await self._ensure_browser()
             self.logger.info(f"Navigating to {url}")
-            state.page.goto(url, wait_until="networkidle")
-            return {"status": "success", "title": state.page.title(), "url": state.page.url}
+            await self.page.goto(url, wait_until="networkidle")
+            return {"status": "success", "title": await self.page.title(), "url": self.page.url}
         except Exception as e:
+            self.logger.error(f"Navigation failed: {e}")
             return {"status": "error", "message": str(e)}
 
-    def search(self, query: str):
+    async def search(self, query: str):
         """Perform a web search using DuckDuckGo."""
         import urllib.parse
         encoded_query = urllib.parse.quote(query)
         url = f"https://duckduckgo.com/html/?q={encoded_query}"
         self.logger.info(f"Searching for: {query}")
-        return self.navigate(url)
+        return await self.navigate(url)
 
-    def click(self, selector: str):
+    async def click(self, selector: str):
         """Clicks an element by selector with resilience."""
         try:
-            state = self._get_local_state()
+            await self._ensure_browser()
             # Wait for element to be attached and visible
-            state.page.wait_for_selector(selector, state="visible", timeout=self.timeout)
-            state.page.click(selector, timeout=self.timeout, force=True)
+            await self.page.wait_for_selector(selector, state="visible", timeout=self.timeout)
+            await self.page.click(selector, timeout=self.timeout, force=True)
             return {"status": "success"}
         except Exception as e:
             return {"status": "error", "message": f"Click failed on {selector}: {str(e)}"}
 
-    def type_text(self, selector: str, text: str):
-        """Robustlly types text by focusing and clicking first. Fallback to keyboard.type."""
+    async def type_text(self, selector: str, text: str):
+        """Robustly types text by focusing and clicking first. Fallback to keyboard.type."""
         try:
-            state = self._get_local_state()
+            await self._ensure_browser()
             # Ensure element is ready
-            state.page.wait_for_selector(selector, state="visible", timeout=self.timeout)
+            await self.page.wait_for_selector(selector, state="visible", timeout=self.timeout)
             
             # Step 1: Try standard fill (fastest)
             try:
-                state.page.fill(selector, text, timeout=5000)
+                await self.page.fill(selector, text, timeout=5000)
                 return {"status": "success"}
             except:
                 # Step 2: Fallback to click and type (human-like)
                 self.logger.info(f"Fill failed on {selector}, falling back to click and type.")
-                state.page.click(selector, force=True)
+                await self.page.click(selector, force=True)
                 # Clear existing text if possible (Ctrl+A, Backspace)
-                state.page.keyboard.press("Control+A")
-                state.page.keyboard.press("Backspace")
-                state.page.keyboard.type(text, delay=50) # Slight delay for realism
+                await self.page.keyboard.press("Control+A")
+                await self.page.keyboard.press("Backspace")
+                await self.page.keyboard.type(text, delay=50) # Slight delay for realism
                 return {"status": "success"}
         except Exception as e:
             return {"status": "error", "message": f"Type failed on {selector}: {str(e)}"}
 
-    def press_key(self, selector: str, key: str):
+    async def press_key(self, selector: str, key: str):
         """Presses a keyboard key on an element (e.g. 'Enter', 'Escape')."""
         try:
-            state = self._get_local_state()
+            await self._ensure_browser()
             if selector:
-                state.page.press(selector, key, timeout=self.timeout)
+                await self.page.press(selector, key, timeout=self.timeout)
             else:
-                state.page.keyboard.press(key)
+                await self.page.keyboard.press(key)
             return {"status": "success"}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    def wait_for(self, selector: str, state: str = "visible"):
+    async def wait_for(self, selector: str, state: str = "visible"):
         """Waits for an element to reach a specific state ('visible', 'hidden', 'attached', 'detached')."""
         try:
-            st = self._get_local_state()
-            if not st.page: self._ensure_browser()
-            st.page.wait_for_selector(selector, state=state, timeout=self.timeout)
+            await self._ensure_browser()
+            await self.page.wait_for_selector(selector, state=state, timeout=self.timeout)
             return {"status": "success", "selector": selector, "state": state}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    def capture_screenshot(self, filename: str = "logs/browser_shot.png"):
+    async def capture_screenshot(self, filename: str = "logs/browser_shot.png"):
         """Captures a screenshot of the current page."""
         try:
-            state = self._get_local_state()
-            if not state.page: self._ensure_browser()
-            state.page.screenshot(path=filename)
+            await self._ensure_browser()
+            await self.page.screenshot(path=filename)
             return {"status": "success", "path": filename}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    def get_content(self):
+    async def get_content(self):
         """Returns the text content of the page."""
         try:
-            state = self._get_local_state()
-            content = state.page.content()
+            await self._ensure_browser()
+            content = await self.page.content()
             return {"status": "success", "content_length": len(content)}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    def navigate_back(self):
+    async def navigate_back(self):
         """Navigates to the previous page in history."""
         try:
-            state = self._get_local_state()
-            state.page.go_back()
-            return {"status": "success", "url": state.page.url}
+            await self._ensure_browser()
+            await self.page.go_back()
+            return {"status": "success", "url": self.page.url}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    def get_interactive_elements(self):
+    async def get_interactive_elements(self):
         """Discovers interactive elements on the page for better planning."""
         try:
-            state = self._get_local_state()
+            await self._ensure_browser()
             # Advanced selector list to catch modern web elements
             selectors = [
                 "button", "input", "select", "a", 
@@ -167,20 +157,20 @@ class BrowserManager:
             seen_selectors = set()
             for selector in selectors:
                 try:
-                    found = state.page.query_selector_all(selector)
+                    found = await self.page.query_selector_all(selector)
                     for el in found:
                         try:
-                            if el.is_visible():
+                            if await el.is_visible():
                                 # Extract identifiers
-                                aria_label = el.get_attribute("aria-label")
-                                title = el.get_attribute("title")
-                                placeholder = el.get_attribute("placeholder")
-                                text = (el.inner_text() or "").strip()
-                                role = el.get_attribute("role")
+                                aria_label = await el.get_attribute("aria-label")
+                                title = await el.get_attribute("title")
+                                placeholder = await el.get_attribute("placeholder")
+                                text = (await el.inner_text() or "").strip()
+                                role = await el.get_attribute("role")
                                 
                                 # Create a unique key to prevent duplicates
-                                el_id = el.get_attribute("id")
-                                name = el.get_attribute("name")
+                                el_id = await el.get_attribute("id")
+                                name = await el.get_attribute("name")
                                 
                                 discovery_text = (aria_label or title or placeholder or text or name or "")[:60]
                                 if not discovery_text: continue
@@ -191,50 +181,46 @@ class BrowserManager:
                                     discovery_text = f"MESSAGE_INPUT: {discovery_text}"
 
                                 # Deduplicate by discovery text and role
-                                key = f"{discovery_text}|{role}|{el.tag_name()}"
+                                key = f"{discovery_text}|{role}|{await el.evaluate('el => el.tagName')}"
                                 if key in seen_selectors: continue
                                 seen_selectors.add(key)
 
                                 elements.append({
-                                    "tag": el.tag_name(),
+                                    "tag": await el.evaluate('el => el.tagName'),
                                     "text": discovery_text,
                                     "id": el_id,
                                     "role": role,
                                     "name": name,
-                                    "value": el.get_attribute("value"),
-                                    "class": el.get_attribute("class")
+                                    "value": await el.get_attribute("value"),
+                                    "class": await el.get_attribute("class")
                                 })
                         except Exception:
-                            # Skip elements that throw security errors (common in cross-origin frames)
                             continue
                 except Exception:
-                    # Skip problematic selectors or frame access errors
                     continue
             
-            # Return a condensed list to avoid token bloat
-            return {"status": "success", "elements": elements[:30]} # Increased to 30 elements
+            return {"status": "success", "elements": elements[:30]}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    def scrape_page_text(self):
+    async def scrape_page_text(self):
         """Extracts high-quality text content from the current page."""
         try:
-            state = self._get_local_state()
-            # Simple innerText extraction which is much cleaner than HTML content for LLMs
-            text = state.page.evaluate("() => document.body.innerText")
-            # Clean up excessive whitespace
+            await self._ensure_browser()
+            text = await self.page.evaluate("() => document.body.innerText")
             clean_text = "\n".join([line.strip() for line in text.split("\n") if line.strip()])
-            return {"status": "success", "text": clean_text[:8000]} # Limit to 8k chars
+            return {"status": "success", "text": clean_text[:8000]}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    def close(self):
-        """Closes the browser session for the current thread."""
-        state = self._get_local_state()
-        if state.browser:
-            state.browser.close()
-            state.playwright.stop()
-            state.playwright = None
-            state.browser = None
+    async def close(self):
+        """Closes the browser session."""
+        if self.browser:
+            await self.browser.close()
+            await self.playwright.stop()
+            self.playwright = None
+            self.browser = None
+            self.context = None
+            self.page = None
             return {"status": "success"}
-        return {"status": "success", "message": "Browser was not active for this thread."}
+        return {"status": "success", "message": "Browser was not active."}

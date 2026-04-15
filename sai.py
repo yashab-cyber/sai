@@ -118,8 +118,9 @@ class SAI:
             ]
         )
 
-    def run_task(self, task: str, max_iterations=25):
+    async def run_task(self, task: str, max_iterations=25):
         """Standardizes autonomous execution loop with thread-safe perception and stuck-loop detection."""
+        import asyncio
         if self.is_running:
             self.logger.warning("Another process is currently running, sir.")
             return
@@ -182,7 +183,7 @@ class SAI:
 
                 # 2. Execute Action
                 print(f"  > Executing: {tool_name}...")
-                action_result = self.execute_tool(tool_name, params)
+                action_result = await self.execute_tool(tool_name, params)
                 
                 # 3. Observe
                 observation = str(action_result)
@@ -210,7 +211,7 @@ class SAI:
                 })
                 
                 # Settle time: help prevent rapid-fire interaction issues on slow sites
-                time.sleep(1)
+                await asyncio.sleep(1)
 
             # Final Reflection
             self.reflection.reflect_on_task(task, history)
@@ -221,7 +222,7 @@ class SAI:
             self.logger.info("Cleaning up tactical logs...")
             self._cleanup_perception_logs()
             # Clean up the browser session for this specific thread
-            self.browser.close()
+            await self.browser.close()
 
     def handle_voice_command(self, text: str):
         """Callback for background voice trigger."""
@@ -232,7 +233,11 @@ class SAI:
         self.logger.info(f"Voice directive received: {text}")
         # Run the task in a separate thread so we don't block the voice trigger system permanently 
         # (though VoiceManager will be 'busy' anyway)
-        task_thread = threading.Thread(target=self.run_task, args=(text,), daemon=True)
+        def _run_wrapper():
+            import asyncio
+            asyncio.run(self.run_task(text))
+            
+        task_thread = threading.Thread(target=_run_wrapper, args=(), daemon=True)
         task_thread.start()
 
     def _cleanup_perception_logs(self):
@@ -252,7 +257,7 @@ class SAI:
                 except Exception as e:
                     self.logger.warning(f"Failed to delete {file_path}: {e}")
 
-    def start_chat(self):
+    async def start_chat(self):
         """Persistent Interactive Chat REPL — JARVIS Protocol."""
         print("\n" + "═"*50)
         print("  S.A.I. TACTICAL INTERFACE — ONLINE")
@@ -270,14 +275,14 @@ class SAI:
                 if not user_input:
                     continue
                     
-                self.run_task(user_input)
+                await self.run_task(user_input)
                 
             except KeyboardInterrupt:
                 break
             except Exception as e:
                 print(f"[S.A.I.] I'm afraid we have a situation, sir: {str(e)}")
 
-    def execute_tool(self, tool_name: str, params: Dict[str, Any]) -> Any:
+    async def execute_tool(self, tool_name: str, params: Dict[str, Any]) -> Any:
         """Dispatches to the appropriate module tool."""
         if not tool_name:
             return {"status": "info", "message": "No tool requested for this step."}
@@ -299,27 +304,27 @@ class SAI:
             
             # Browser Operations
             elif tool_name == "browser.search":
-                return self.browser.search(params['query'])
+                return await self.browser.search(params['query'])
             elif tool_name == "browser.navigate":
-                return self.browser.navigate(params['url'])
+                return await self.browser.navigate(params['url'])
             elif tool_name == "browser.interact":
                 action = params['action']
                 if action == "click":
-                    return self.browser.click(params['selector'])
+                    return await self.browser.click(params['selector'])
                 elif action == "type":
-                    return self.browser.type_text(params['selector'], params['text'])
+                    return await self.browser.type_text(params['selector'], params['text'])
                 elif action == "screenshot":
-                    return self.browser.capture_screenshot()
+                    return await self.browser.capture_screenshot()
                 elif action == "back":
-                    return self.browser.navigate_back()
+                    return await self.browser.navigate_back()
                 elif action == "press":
-                    return self.browser.press_key(params.get('selector'), params['key'])
+                    return await self.browser.press_key(params.get('selector'), params['key'])
             elif tool_name == "browser.wait":
-                return self.browser.wait_for(params['selector'], params.get('state', 'visible'))
+                return await self.browser.wait_for(params['selector'], params.get('state', 'visible'))
             elif tool_name == "browser.explore":
-                return self.browser.get_interactive_elements()
+                return await self.browser.get_interactive_elements()
             elif tool_name == "browser.scrape":
-                return self.browser.scrape_page_text()
+                return await self.browser.scrape_page_text()
             
             # Coder Operations
             elif tool_name == "coder.write":
@@ -457,11 +462,12 @@ class SAI:
         print("🛠️ Evolution engine standing by, sir. Ready to implement improvements on your command.")
 
 if __name__ == "__main__":
+    import asyncio
     sai = SAI()
     if "--chat" in sys.argv:
-        sai.start_chat()
+        asyncio.run(sai.start_chat())
     elif len(sys.argv) > 1:
-        sai.run_task(" ".join(sys.argv[1:]))
+        asyncio.run(sai.run_task(" ".join(sys.argv[1:])))
         
         # Keep process alive if GUI or Dashboard was started
         if sai.gui.is_active or sai.dashboard.is_active:
