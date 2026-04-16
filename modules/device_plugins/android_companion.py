@@ -16,10 +16,31 @@ class AndroidCompanionClient:
     """
     def __init__(self, host: str = None, port: int = 8080, token: Optional[str] = None):
         if host is None:
-            host = os.getenv("SAI_ANDROID_HOST", "127.0.0.1")
+            env_host = os.getenv("SAI_ANDROID_HOST")
+            if env_host:
+                host = env_host
+            else:
+                # When connected to a phone hotspot, the phone is the default gateway.
+                gateway = self._get_default_gateway()
+                host = gateway if gateway else "127.0.0.1"
+
         self.base_url = f"http://{host}:{port}"
         self.session = requests.Session()
         self.token = token or os.getenv("SAI_ANDROID_TOKEN", "jarvis_network_key")
+
+    def _get_default_gateway(self) -> Optional[str]:
+        """Attempts to find the default gateway on Linux systems (the hotspot host)."""
+        try:
+            import socket, struct
+            with open("/proc/net/route") as fh:
+                for line in fh:
+                    fields = line.strip().split()
+                    if fields[1] != '00000000' or not int(fields[3], 16) & 2:
+                        continue
+                    return socket.inet_ntoa(struct.pack("<L", int(fields[2], 16)))
+        except Exception:
+            pass
+        return None
 
     def _headers(self) -> Dict[str, str]:
         return {
