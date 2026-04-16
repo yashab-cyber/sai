@@ -28,7 +28,7 @@ function App(): React.JSX.Element {
   const [visionPackage, setVisionPackage] = useState('unknown');
 
   const [token, setToken] = useState('jarvis_network_key');
-  const [whitelist, setWhitelist] = useState('127.0.0.1,::1');
+  const [whitelist, setWhitelist] = useState('');
   const [fadeAnim] = useState(new Animated.Value(1));
 
   useEffect(() => {

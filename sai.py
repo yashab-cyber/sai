@@ -95,6 +95,14 @@ class SAI:
         self.hud_window = HUDWindow()
         self.reflection = ReflectionEngine(self.brain, self.evolution)
         self.is_running = False
+
+        # Auto-start the communication layer so Android agents can connect immediately.
+        # Without this, CLI mode (python sai.py "task") has no SocketIO hub and
+        # devices never register → all commands get queued forever.
+        try:
+            self.gui.start()
+        except Exception as e:
+            self.logger.warning("GUI/comm server auto-start failed (non-fatal): %s", e)
         
         logging.info("S.A.I. systems initialized. All modules operational, sir.")
 
@@ -465,7 +473,46 @@ class SAI:
             elif tool_name == "network.list":
                 return self.device_manager.list_devices()
             elif tool_name == "network.execute":
-                return self.device_manager.route_command(params['device_id'], params['command'], params.get('params', {}))
+                device_id = params['device_id']
+                command = params['command']
+                cmd_params = params.get('params', {})
+
+                # Try the SocketIO path first (device registered via WebSocket)
+                result = self.device_manager.route_command(device_id, command, cmd_params)
+
+                # ── Direct HTTP Fallback ──
+                # If the device isn't registered via SocketIO (queued/failed),
+                # try sending the command directly via HTTP to the companion app.
+                if result.get("status") in ("queued", "failed"):
+                    self.logger.info("SocketIO path unavailable for %s — trying direct HTTP fallback.", device_id)
+                    try:
+                        from modules.device_plugins.android_companion import AndroidCompanionClient
+                        client = AndroidCompanionClient()
+                        if client.is_healthy(cache_ttl=5.0):
+                            http_result = None
+                            if command == "open_app":
+                                success = client.open_app(cmd_params.get("package", ""))
+                                http_result = {"status": "success" if success else "failed", "action": command, "message": f"Direct HTTP: {'App opened' if success else 'Failed to open app'}"}
+                            elif command == "tap":
+                                success = client.tap(int(cmd_params.get("x", 0)), int(cmd_params.get("y", 0)))
+                                http_result = {"status": "success" if success else "failed", "action": command, "message": f"Direct HTTP: {'Tap sent' if success else 'Tap failed'}"}
+                            elif command == "type":
+                                success = client.type_text(cmd_params.get("text", ""))
+                                http_result = {"status": "success" if success else "failed", "action": command, "message": f"Direct HTTP: {'Text entered' if success else 'Type failed'}"}
+                            elif command == "get_screen_text":
+                                text = client.get_screen_text()
+                                http_result = {"status": "success", "action": command, "data": text, "message": "Direct HTTP: Screen text captured"}
+                            elif command == "send_message":
+                                success = client.send_message(cmd_params.get("app", "com.whatsapp"), cmd_params.get("contact", ""), cmd_params.get("message", ""))
+                                http_result = {"status": "success" if success else "failed", "action": command, "message": f"Direct HTTP: {'Message sent' if success else 'Send failed'}"}
+                            
+                            if http_result:
+                                self.logger.info("Direct HTTP fallback succeeded for %s: %s", command, http_result.get("status"))
+                                return http_result
+                    except Exception as exc:
+                        self.logger.debug("Direct HTTP fallback failed: %s", exc)
+
+                return result
 
             elif tool_name == "vision.parse_screen":
                 device_id = params.get("device_id", "android_phone")
