@@ -14,7 +14,9 @@ class AndroidCompanionClient:
     Client to communicate with the SAI Android Companion App.
     Replaces Termux:API with a robust HTTP-based local server approach.
     """
-    def __init__(self, host: str = "127.0.0.1", port: int = 8080, token: Optional[str] = None):
+    def __init__(self, host: str = None, port: int = 8080, token: Optional[str] = None):
+        if host is None:
+            host = os.getenv("SAI_ANDROID_HOST", "127.0.0.1")
         self.base_url = f"http://{host}:{port}"
         self.session = requests.Session()
         self.token = token or os.getenv("SAI_ANDROID_TOKEN", "jarvis_network_key")
