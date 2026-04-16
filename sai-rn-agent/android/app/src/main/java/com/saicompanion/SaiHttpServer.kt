@@ -113,6 +113,23 @@ class SaiHttpServer(
                 )
             }
 
+            // ── Health Check Endpoint ──
+            // Lightweight ping for SAI to verify the companion is alive.
+            if (method == Method.GET && uri == "/health") {
+                val svc = SaiAccessibilityService.instance
+                val healthJson = JSONObject().apply {
+                    put("status", "ok")
+                    put("accessibility", svc != null)
+                    put("screenshot_ready", svc != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
+                    put("timestamp", System.currentTimeMillis())
+                }
+                return newFixedLengthResponse(
+                    Response.Status.OK,
+                    "application/json",
+                    healthJson.toString()
+                )
+            }
+
             if (method == Method.POST && uri == "/action/open_app") {
                 val map = HashMap<String, String>()
                 session.parseBody(map)
@@ -228,24 +245,39 @@ class SaiHttpServer(
             }
 
             if (method == Method.GET && uri == "/state/screenshot") {
-                val screenshotBase64 = SaiAccessibilityService.instance?.captureScreenshotBase64()
-                if (screenshotBase64.isNullOrBlank()) {
+                try {
+                    val screenshotBase64 = SaiAccessibilityService.instance?.captureScreenshotBase64()
+                    if (screenshotBase64.isNullOrBlank()) {
+                        val svc = SaiAccessibilityService.instance
+                        val reason = when {
+                            svc == null -> "ACCESSIBILITY_NOT_RUNNING"
+                            android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R -> "API_LEVEL_TOO_LOW"
+                            else -> "SCREENSHOT_CAPTURE_FAILED"
+                        }
+                        return newFixedLengthResponse(
+                            Response.Status.OK,
+                            "application/json",
+                            buildResponse("failed", "screenshot", reason)
+                        )
+                    }
+
+                    val extra = JSONObject().apply {
+                        put("image_base64", screenshotBase64)
+                        put("image_format", "jpeg")
+                    }
                     return newFixedLengthResponse(
                         Response.Status.OK,
                         "application/json",
-                        buildResponse("failed", "screenshot", "Unable to capture screenshot")
+                        buildResponse("success", "screenshot", "Screenshot captured", extra)
+                    )
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    return newFixedLengthResponse(
+                        Response.Status.OK,
+                        "application/json",
+                        buildResponse("failed", "screenshot", "SCREENSHOT_PERMISSION_DENIED: ${e.message ?: "unknown"}")
                     )
                 }
-
-                val extra = JSONObject().apply {
-                    put("image_base64", screenshotBase64)
-                    put("image_format", "jpeg")
-                }
-                return newFixedLengthResponse(
-                    Response.Status.OK,
-                    "application/json",
-                    buildResponse("success", "screenshot", "Screenshot captured", extra)
-                )
             }
 
         } catch (e: Exception) {
