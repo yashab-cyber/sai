@@ -241,14 +241,19 @@ class SAI:
         task_thread.start()
 
     def _cleanup_perception_logs(self):
-        """Removes temporary visual logs created during the task."""
+        """Removes temporary visual logs created during the task.
+
+        Keep the canonical HUD frame (logs/hud.png) so the GUI can continue
+        rendering the last known screenshot while persistence mode is active.
+        """
         import glob
         log_dir = "logs"
         if not os.path.exists(log_dir):
             return
             
-        # Target HUD shots and other tool-generated screenshots
-        patterns = ["hud*.png", "screenshot*.png", "browser_shot*.png"]
+        # Target temporary HUD shots and other tool-generated screenshots.
+        # Use hud_*.png so logs/hud.png is preserved for the GUI poller.
+        patterns = ["hud_*.png", "screenshot*.png", "browser_shot*.png"]
         for pattern in patterns:
             for file_path in glob.glob(os.path.join(log_dir, pattern)):
                 try:
