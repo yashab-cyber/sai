@@ -11,6 +11,7 @@ import threading
 import time
 import uuid
 from typing import Dict, Any, Optional
+from core.memory import MemoryManager
 
 class DeviceManager:
     """
@@ -26,6 +27,7 @@ class DeviceManager:
         self.command_queues: Dict[str, list] = {}  # Task execution pipeline queue
         self.lock = threading.Lock()
         self.on_command_dispatch = None
+        self.memory = MemoryManager("logs/sai_memory.db")
 
     def register_device(self, device_id: str, device_type: str, ip_address: str) -> bool:
         """Registers a device when it connects and processes any queued tasks."""
@@ -67,6 +69,45 @@ class DeviceManager:
 
     def route_command(self, device_id: str, command: str, params: Dict[str, Any], timeout: int = 15) -> Dict[str, Any]:
         """Routes a command. If the device is offline, it queues the command automatically."""
+        started_at = time.time()
+
+        # Lightweight command safety guardrail
+        if command == "shell":
+            shell_cmd = str(params.get("cmd") or params.get("command") or "").lower()
+            blocked_markers = [
+                "factoryreset",
+                "wipe data",
+                "rm -rf /",
+                "recovery --wipe_data",
+                "am broadcast -a android.intent.action.master_clear"
+            ]
+            if any(marker in shell_cmd for marker in blocked_markers):
+                response = {
+                    "status": "failed",
+                    "action": command,
+                    "message": "Blocked dangerous shell command by policy.",
+                    "timestamp": int(time.time()),
+                    "screen_data": {
+                        "text": "",
+                        "elements": [],
+                        "activity": "unknown",
+                        "package": "unknown"
+                    }
+                }
+                self.memory.log_action(
+                    device_id=device_id,
+                    action=command,
+                    request_obj={"params": params, "timeout": timeout},
+                    response_obj=response,
+                    latency_ms=int((time.time() - started_at) * 1000)
+                )
+                self.memory.update_learned_pattern(
+                    task_signature=f"{device_id}:{command}",
+                    action_sequence={"command": command, "params": params},
+                    success=False
+                )
+                return response
+
         with self.lock:
             if device_id not in self.devices or self.devices[device_id]["status"] != "online":
                 if device_id not in self.command_queues:
@@ -77,7 +118,26 @@ class DeviceManager:
                     "timeout": timeout
                 })
                 self.logger.info(f"Device '{device_id}' offline. Queued command '{command}'.")
-                return {"status": "queued", "message": f"Command '{command}' queued automatically."}
+                response = {
+                    "status": "queued",
+                    "action": command,
+                    "message": f"Command '{command}' queued automatically.",
+                    "timestamp": int(time.time()),
+                    "screen_data": {
+                        "text": "",
+                        "elements": [],
+                        "activity": "unknown",
+                        "package": "unknown"
+                    }
+                }
+                self.memory.log_action(
+                    device_id=device_id,
+                    action=command,
+                    request_obj={"params": params, "timeout": timeout},
+                    response_obj=response,
+                    latency_ms=int((time.time() - started_at) * 1000)
+                )
+                return response
         
         command_id = str(uuid.uuid4())
         event = threading.Event()
@@ -102,7 +162,20 @@ class DeviceManager:
             pending = self.pending_commands.pop(command_id, None)
             
         if success and pending and pending["response"] is not None:
-            return pending["response"]
+            response = pending["response"]
+            self.memory.log_action(
+                device_id=device_id,
+                action=command,
+                request_obj={"params": params, "timeout": timeout},
+                response_obj=response,
+                latency_ms=int((time.time() - started_at) * 1000)
+            )
+            self.memory.update_learned_pattern(
+                task_signature=f"{device_id}:{command}",
+                action_sequence={"command": command, "params": params},
+                success=response.get("status") == "success"
+            )
+            return response
         else:
             # Retry logic: Re-queue if timed out
             self.logger.warning(f"Command '{command}' to '{device_id}' timed out. Re-queuing.")
@@ -112,7 +185,31 @@ class DeviceManager:
                     "params": params,
                     "timeout": timeout
                 })
-            return {"status": "error", "message": f"Command timed out. Queued for retry."}
+            response = {
+                "status": "failed",
+                "action": command,
+                "message": "Command timed out. Queued for retry.",
+                "timestamp": int(time.time()),
+                "screen_data": {
+                    "text": "",
+                    "elements": [],
+                    "activity": "unknown",
+                    "package": "unknown"
+                }
+            }
+            self.memory.log_action(
+                device_id=device_id,
+                action=command,
+                request_obj={"params": params, "timeout": timeout},
+                response_obj=response,
+                latency_ms=int((time.time() - started_at) * 1000)
+            )
+            self.memory.update_learned_pattern(
+                task_signature=f"{device_id}:{command}",
+                action_sequence={"command": command, "params": params},
+                success=False
+            )
+            return response
 
     def resolve_command(self, command_id: str, response: Dict[str, Any]):
         """Called by the WebSocket listener when a device replies to a command."""

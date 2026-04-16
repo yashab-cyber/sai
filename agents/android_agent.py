@@ -1,18 +1,22 @@
-import os
-import sys
 import time
-import json
 import socketio
-import base64
-import threading
 import socket
 import concurrent.futures
+import logging
+import threading
 
 from modules.device_plugins.android_companion import DeviceControl
 
 HUB_URL = "auto"  # Set to "auto" to automatically find the SAI Hub, e.g. on 10.x.x.x hotspot networks
 TOKEN = "jarvis_network_key"
 DEVICE_ID = "android_phone"
+
+logger = logging.getLogger("SAI.AndroidAgent")
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
+is_registered = False
+VISION_STREAM_INTERVAL_SEC = 1.0
 
 def _scan_subnet_for_hub(port=5000, timeout=0.3):
     """Scan local subnet for SAI Hub. Handles 192.168.x.x and 10.x.x.x networks automatically."""
@@ -73,21 +77,41 @@ control = DeviceControl()
 
 @sio.event(namespace='/agent')
 def connect():
-    print("[+] Connected to SAI Hub. Authenticating...")
-    sio.emit('agent_connect', {
-        "token": TOKEN,
-        "device_id": DEVICE_ID,
-        "device_type": "android"
-    }, namespace='/agent')
-    print(f"[+] Authenticated as '{DEVICE_ID}'. Listening for commands...")
+    global is_registered
+    logger.info("Connected to SAI Hub transport. Authenticating agent...")
+    try:
+        response = sio.call(
+            'agent_connect',
+            {
+                "token": TOKEN,
+                "device_id": DEVICE_ID,
+                "device_type": "android"
+            },
+            namespace='/agent',
+            timeout=10
+        )
+
+        if isinstance(response, dict) and response.get("status") == "success":
+            is_registered = True
+            logger.info("Authenticated as '%s'. Listening for commands.", DEVICE_ID)
+        else:
+            is_registered = False
+            logger.error("Agent registration rejected by hub: %s", response)
+            sio.disconnect()
+    except Exception as exc:
+        is_registered = False
+        logger.error("Agent registration failed: %s", exc)
+        sio.disconnect()
 
 @sio.event(namespace='/agent')
 def connect_error(data):
-    print(f"[-] Connection error: {data}")
+    logger.error("Connection error: %s", data)
 
 @sio.event(namespace='/agent')
 def disconnect():
-    print("[-] Disconnected from SAI Hub.")
+    global is_registered
+    is_registered = False
+    logger.warning("Disconnected from SAI Hub.")
 
 @sio.on('execute', namespace='/agent')
 def on_execute(data):
@@ -95,7 +119,7 @@ def on_execute(data):
     command = data.get("command")
     params = data.get("params", {})
     
-    print(f"[>] {command}: {params}")
+    logger.info("Command received: %s %s", command, params)
     response = {}
     
     try:
@@ -133,12 +157,30 @@ def on_execute(data):
         
     sio.emit('agent_response', {"command_id": command_id, "response": response}, namespace='/agent')
 
-if __name__ == "__main__":
+
+def _vision_stream_loop():
+    """Continuously publishes live screenshot frames to the Hub for real-time vision."""
     while True:
         try:
-            print(f"[*] Connecting to {ACTUAL_HUB_URL}")
+            if sio.connected and is_registered:
+                frame_b64 = control.get_screenshot_base64()
+                if frame_b64:
+                    sio.emit(
+                        'vision_stream',
+                        {"device_id": DEVICE_ID, "frame": frame_b64},
+                        namespace='/agent'
+                    )
+        except Exception as exc:
+            logger.debug("Vision stream publish skipped: %s", exc)
+        time.sleep(VISION_STREAM_INTERVAL_SEC)
+
+if __name__ == "__main__":
+    threading.Thread(target=_vision_stream_loop, daemon=True).start()
+    while True:
+        try:
+            logger.info("Connecting to %s", ACTUAL_HUB_URL)
             sio.connect(ACTUAL_HUB_URL, namespaces=['/agent'])
             sio.wait()
         except socketio.exceptions.ConnectionError:
-            print("Retrying connection in 5 seconds...")
+            logger.warning("Retrying connection in 5 seconds...")
             time.sleep(5)

@@ -110,6 +110,40 @@ def handle_vision_stream(data):
             # Forward the frame to the frontend for real-time monitoring
             socketio.emit('device_vision_update', {"device_id": device_id, "frame": frame_b64}, namespace='/')
 
+        if hasattr(sai, 'vision_intelligence'):
+            parsed = sai.vision_intelligence.parse_screenshot_base64(frame_b64)
+            socketio.emit(
+                'device_vision_parsed_update',
+                {
+                    "device_id": device_id,
+                    "parsed": parsed
+                },
+                namespace='/'
+            )
+
+
+@app.route('/api/vision/latest', methods=['GET'])
+def get_latest_vision():
+    device_id = request.args.get("device_id", "android_phone")
+    sai = app.config.get('SAI_INSTANCE')
+    if not sai or not hasattr(sai, 'device_manager'):
+        return jsonify({"status": "error", "message": "SAI instance unavailable"}), 500
+
+    frame_b64 = sai.device_manager.latest_frames.get(device_id)
+    if not frame_b64:
+        return jsonify({"status": "error", "message": "No frame available", "device_id": device_id}), 404
+
+    parsed = {}
+    if hasattr(sai, 'vision_intelligence'):
+        parsed = sai.vision_intelligence.parse_screenshot_base64(frame_b64)
+
+    return jsonify({
+        "status": "success",
+        "device_id": device_id,
+        "frame": frame_b64,
+        "parsed": parsed
+    })
+
 @socketio.on('agent_response', namespace='/agent')
 
 def handle_agent_response(data):
@@ -177,6 +211,7 @@ class GUIManager:
         global sai_instance
         self.sai = sai
         sai_instance = sai
+        app.config['SAI_INSTANCE'] = sai
         self.port = port
         self.thread = None
         self.logger = logging.getLogger("SAI.GUI")

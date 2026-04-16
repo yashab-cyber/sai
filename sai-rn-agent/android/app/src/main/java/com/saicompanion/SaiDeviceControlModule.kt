@@ -17,10 +17,15 @@ class SaiDeviceControlModule(private val reactContext: ReactApplicationContext) 
     }
 
     @ReactMethod
-    fun startLocalServer(port: Int, promise: Promise) {
+    fun startLocalServer(port: Int, token: String, whitelistCsv: String, promise: Promise) {
         try {
             if (server == null) {
-                server = SaiHttpServer(port, reactContext)
+                val whitelist = whitelistCsv
+                    .split(",")
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                    .toSet()
+                server = SaiHttpServer(port, reactContext, token, whitelist)
                 server?.start()
             }
             promise.resolve("Server started on port $port")

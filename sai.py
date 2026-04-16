@@ -41,6 +41,9 @@ from modules.file_manager import FileManager
 from modules.hud_window import HUDWindow
 from modules.system_manager import SystemManager
 from modules.device_manager import DeviceManager
+from modules.command_intelligence import CommandIntelligence
+from modules.vision_intelligence import VisionIntelligence
+from modules.plan_executor import PlanExecutor
 
 class SAI:
     """
@@ -73,6 +76,9 @@ class SAI:
         self.state_manager = StateManager()
         self.command_router = CommandRouter(self)
         self.feedback_loop = FeedbackLoop(self)
+        self.command_intelligence = CommandIntelligence()
+        self.vision_intelligence = VisionIntelligence()
+        self.plan_executor = PlanExecutor(self)
 
 
         self.voice = VoiceManager(self)
@@ -407,6 +413,65 @@ class SAI:
                 return self.device_manager.list_devices()
             elif tool_name == "network.execute":
                 return self.device_manager.route_command(params['device_id'], params['command'], params.get('params', {}))
+
+            elif tool_name == "vision.parse_screen":
+                device_id = params.get("device_id", "android_phone")
+                from modules.device_plugins.android_companion import AndroidCompanionClient
+
+                client = AndroidCompanionClient()
+                image_b64 = client.get_screenshot_base64()
+                if not image_b64:
+                    return {"status": "failed", "message": "No screenshot returned from device", "ui_elements": []}
+
+                return self.vision_intelligence.parse_screenshot_base64(image_b64)
+
+            elif tool_name == "command.plan":
+                user_input = params.get("input", "")
+                device_id = params.get("device_id", "android_phone")
+                use_vision = params.get("use_vision", True)
+
+                vision_data = None
+                if use_vision:
+                    from modules.device_plugins.android_companion import AndroidCompanionClient
+                    client = AndroidCompanionClient()
+                    image_b64 = client.get_screenshot_base64()
+                    if image_b64:
+                        vision_data = self.vision_intelligence.parse_screenshot_base64(image_b64)
+
+                plan = self.command_intelligence.build_execution_plan(user_input, vision_data=vision_data)
+                return {
+                    "status": "success",
+                    "device_id": device_id,
+                    "plan": plan,
+                }
+
+            elif tool_name == "command.execute_plan":
+                user_input = params.get("input", "")
+                device_id = params.get("device_id", "android_phone")
+                retry_limit = int(params.get("retry_limit", 2))
+                confidence_gate = float(params.get("confidence_gate", 0.45))
+
+                vision_data = None
+                if params.get("use_vision", True):
+                    from modules.device_plugins.android_companion import AndroidCompanionClient
+                    client = AndroidCompanionClient()
+                    image_b64 = client.get_screenshot_base64()
+                    if image_b64:
+                        vision_data = self.vision_intelligence.parse_screenshot_base64(image_b64)
+
+                plan = self.command_intelligence.build_execution_plan(user_input, vision_data=vision_data)
+                executed = self.plan_executor.execute(
+                    device_id=device_id,
+                    plan=plan,
+                    retry_limit=retry_limit,
+                    confidence_gate=confidence_gate,
+                )
+                return {
+                    "status": executed.get("status", "failed"),
+                    "device_id": device_id,
+                    "plan": plan,
+                    "execution": executed,
+                }
             
             elif tool_name == "system.ask":
                 print(f"\n[SAI PROMPT] {params['prompt']}")

@@ -53,6 +53,41 @@ class MemoryManager:
                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+            # Production action history table for device/network execution traces
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS actions_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    device_id TEXT,
+                    action TEXT,
+                    request_json TEXT,
+                    response_json TEXT,
+                    status TEXT,
+                    latency_ms INTEGER
+                )
+            """)
+
+            # User preference store for runtime behavior toggles
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_preferences (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Learned patterns for future plan shortcuts
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS learned_patterns (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_signature TEXT,
+                    action_sequence TEXT,
+                    success_count INTEGER DEFAULT 0,
+                    failure_count INTEGER DEFAULT 0,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             conn.commit()
 
     def save_memory(self, table: str, data: Dict[str, Any]):
@@ -85,4 +120,76 @@ class MemoryManager:
         """Clears the codebase map before a re-scan."""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM codebase_map")
+            conn.commit()
+
+    def log_action(self, device_id: str, action: str, request_obj: Dict[str, Any], response_obj: Dict[str, Any], latency_ms: int = 0):
+        """Stores a normalized action trace for feedback-loop learning and audit."""
+        status = response_obj.get("status", "unknown") if isinstance(response_obj, dict) else "unknown"
+        payload = {
+            "device_id": device_id,
+            "action": action,
+            "request_json": json.dumps(request_obj, ensure_ascii=False),
+            "response_json": json.dumps(response_obj, ensure_ascii=False),
+            "status": status,
+            "latency_ms": int(latency_ms or 0)
+        }
+        self.save_memory("actions_history", payload)
+
+    def set_preference(self, key: str, value: Any):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO user_preferences (key, value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET
+                  value=excluded.value,
+                  updated_at=CURRENT_TIMESTAMP
+                """,
+                (key, json.dumps(value, ensure_ascii=False))
+            )
+            conn.commit()
+
+    def get_preference(self, key: str, default: Any = None) -> Any:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM user_preferences WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            if not row:
+                return default
+            try:
+                return json.loads(row[0])
+            except Exception:
+                return row[0]
+
+    def update_learned_pattern(self, task_signature: str, action_sequence: Any, success: bool):
+        action_seq_json = json.dumps(action_sequence, ensure_ascii=False)
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, success_count, failure_count FROM learned_patterns WHERE task_signature = ?",
+                (task_signature,)
+            )
+            row = cursor.fetchone()
+            if row:
+                pattern_id, success_count, failure_count = row
+                if success:
+                    success_count += 1
+                else:
+                    failure_count += 1
+                cursor.execute(
+                    """
+                    UPDATE learned_patterns
+                    SET action_sequence = ?, success_count = ?, failure_count = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (action_seq_json, success_count, failure_count, pattern_id)
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO learned_patterns (task_signature, action_sequence, success_count, failure_count)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (task_signature, action_seq_json, 1 if success else 0, 0 if success else 1)
+                )
             conn.commit()

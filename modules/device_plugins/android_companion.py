@@ -1,7 +1,11 @@
 import requests
 import json
 import logging
+import os
+import base64
+import io
 from typing import Optional, Dict, Any
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -10,13 +14,25 @@ class AndroidCompanionClient:
     Client to communicate with the SAI Android Companion App.
     Replaces Termux:API with a robust HTTP-based local server approach.
     """
-    def __init__(self, host: str = "127.0.0.1", port: int = 8080):
+    def __init__(self, host: str = "127.0.0.1", port: int = 8080, token: Optional[str] = None):
         self.base_url = f"http://{host}:{port}"
         self.session = requests.Session()
+        self.token = token or os.getenv("SAI_ANDROID_TOKEN", "jarvis_network_key")
+
+    def _headers(self) -> Dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json"
+        }
 
     def _post(self, endpoint: str, data: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            response = self.session.post(f"{self.base_url}/{endpoint}", json=data, timeout=5.0)
+            response = self.session.post(
+                f"{self.base_url}/{endpoint}",
+                json=data,
+                headers=self._headers(),
+                timeout=8.0
+            )
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -25,7 +41,11 @@ class AndroidCompanionClient:
 
     def _get(self, endpoint: str) -> Dict[str, Any]:
         try:
-            response = self.session.get(f"{self.base_url}/{endpoint}", timeout=5.0)
+            response = self.session.get(
+                f"{self.base_url}/{endpoint}",
+                headers=self._headers(),
+                timeout=8.0
+            )
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -53,6 +73,23 @@ class AndroidCompanionClient:
         """Extracts text currently visible on screen via Accessibility Tree"""
         res = self._get("state/screen_text")
         return res.get("data", "")
+
+    def get_screenshot_base64(self) -> str:
+        """Captures a screenshot from Android accessibility screenshot pipeline."""
+        res = self._get("state/screenshot")
+        return res.get("image_base64", "")
+
+    def get_screenshot_image(self) -> Optional[Image.Image]:
+        """Returns screenshot as a PIL image when available."""
+        b64_img = self.get_screenshot_base64()
+        if not b64_img:
+            return None
+        try:
+            raw = base64.b64decode(b64_img)
+            return Image.open(io.BytesIO(raw)).convert("RGB")
+        except Exception as exc:
+            logger.error(f"Failed decoding screenshot payload: {exc}")
+            return None
 
     def send_message(self, app: str, contact: str, message: str) -> bool:
         """High-level automation macro to send a message"""
@@ -82,6 +119,12 @@ class DeviceControl:
 
     def get_screen_text(self):
         return self.client.get_screen_text()
+
+    def get_screenshot_base64(self):
+        return self.client.get_screenshot_base64()
+
+    def get_screenshot_image(self):
+        return self.client.get_screenshot_image()
 
     def send_message(self, app: str, contact: str, message: str):
         return self.client.send_message(app, contact, message)

@@ -8,6 +8,7 @@ import {
   useColorScheme,
   View,
   Button,
+  Image,
   NativeModules,
 } from 'react-native';
 
@@ -17,6 +18,11 @@ function App(): React.JSX.Element {
   const isDarkMode = useColorScheme() === 'dark';
   const [serverStatus, setServerStatus] = useState('Stopped');
   const [hasAccessibilityMsg, setHasAccessibilityMsg] = useState('Unknown');
+  const [visionStatus, setVisionStatus] = useState('Idle');
+  const [visionImageBase64, setVisionImageBase64] = useState('');
+  const [visionElements, setVisionElements] = useState<any[]>([]);
+  const [visionPackage, setVisionPackage] = useState('unknown');
+  const [visionActivity, setVisionActivity] = useState('unknown');
 
   useEffect(() => {
     // Check if the accessibility service is running
@@ -28,7 +34,11 @@ function App(): React.JSX.Element {
 
   const handleStartServer = async () => {
     try {
-      const msg = await SaiDeviceControl.startLocalServer(8080);
+      const msg = await SaiDeviceControl.startLocalServer(
+        8080,
+        'jarvis_network_key',
+        '127.0.0.1,::1'
+      );
       setServerStatus(msg);
     } catch (e) {
       console.error(e);
@@ -49,6 +59,42 @@ function App(): React.JSX.Element {
   const handleOpenAccessibility = () => {
     SaiDeviceControl.openAccessibilitySettings();
   };
+
+  const handleCaptureVision = async () => {
+    setVisionStatus('Capturing...');
+    try {
+      const res = await fetch('http://127.0.0.1:8080/state/screenshot', {
+        method: 'GET',
+        headers: {
+          Authorization: 'Bearer jarvis_network_key',
+        },
+      });
+      const payload = await res.json();
+      if (payload.status === 'success') {
+        setVisionImageBase64(payload.image_base64 || '');
+        const elements = payload?.screen_data?.elements || [];
+        setVisionElements(Array.isArray(elements) ? elements : []);
+        setVisionPackage(payload?.screen_data?.package || 'unknown');
+        setVisionActivity(payload?.screen_data?.activity || 'unknown');
+        setVisionStatus(`Detected ${Array.isArray(elements) ? elements.length : 0} elements`);
+      } else {
+        setVisionStatus(payload.message || 'Capture failed');
+      }
+    } catch (err: any) {
+      setVisionStatus(err?.message || 'Capture error');
+    }
+  };
+
+  const maxBounds = visionElements.reduce(
+    (acc, el) => {
+      const b = el?.bounds || [0, 0, 0, 0];
+      return {
+        w: Math.max(acc.w, Number(b[2]) || 0),
+        h: Math.max(acc.h, Number(b[3]) || 0),
+      };
+    },
+    { w: 1080, h: 1920 }
+  );
 
   return (
     <SafeAreaView style={styles.container}>
@@ -87,6 +133,46 @@ function App(): React.JSX.Element {
             Shizuku grants higher-level system privileges allowing adb-level operations continuously without root.
           </Text>
           <Button title="Pair Shizuku (Coming Soon)" onPress={() => {}} disabled={true} />
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>4. Vision Debug</Text>
+          <Text style={styles.status}>{visionStatus}</Text>
+          <Text style={styles.description}>Package: {visionPackage} | Activity: {visionActivity}</Text>
+          <Button title="Capture Vision Frame" onPress={handleCaptureVision} color="#3498db" />
+
+          {visionImageBase64 ? (
+            <View style={styles.visionContainer}>
+              <Image
+                style={styles.visionImage}
+                source={{ uri: `data:image/jpeg;base64,${visionImageBase64}` }}
+                resizeMode="contain"
+              />
+              <View style={styles.overlayLayer} pointerEvents="none">
+                {visionElements.slice(0, 25).map((el, idx) => {
+                  const b = el?.bounds || [0, 0, 0, 0];
+                  const left = (Number(b[0]) / (maxBounds.w || 1)) * 100;
+                  const top = (Number(b[1]) / (maxBounds.h || 1)) * 100;
+                  const width = ((Number(b[2]) - Number(b[0])) / (maxBounds.w || 1)) * 100;
+                  const height = ((Number(b[3]) - Number(b[1])) / (maxBounds.h || 1)) * 100;
+                  return (
+                    <View
+                      key={`${idx}-${el?.text || 'el'}`}
+                      style={[
+                        styles.overlayBox,
+                        {
+                          left: `${left}%`,
+                          top: `${top}%`,
+                          width: `${Math.max(width, 3)}%`,
+                          height: `${Math.max(height, 2)}%`,
+                        },
+                      ]}
+                    />
+                  );
+                })}
+              </View>
+            </View>
+          ) : null}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -146,7 +232,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-  }
+  },
+  visionContainer: {
+    marginTop: 16,
+    width: '100%',
+    height: 260,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#1f1f1f',
+    position: 'relative',
+  },
+  visionImage: {
+    width: '100%',
+    height: '100%',
+  },
+  overlayLayer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+  },
+  overlayBox: {
+    position: 'absolute',
+    borderWidth: 1,
+    borderColor: '#00e5ff',
+    backgroundColor: 'rgba(0,229,255,0.08)',
+  },
 });
 
 export default App;

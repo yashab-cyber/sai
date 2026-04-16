@@ -256,6 +256,33 @@ class ToolManifest:
             }
         },
         {
+            "name": "vision.parse_screen",
+            "description": "Captures the current Android screen and returns OCR + UI elements (text, bounds, inferred element type). Useful for dynamic interaction planning.",
+            "parameters": {
+                "device_id": "string (default: android_phone)"
+            }
+        },
+        {
+            "name": "command.plan",
+            "description": "Builds intent-aware execution steps from natural language command. Optionally uses live vision context for dynamic tap targets.",
+            "parameters": {
+                "input": "string",
+                "device_id": "string (default: android_phone)",
+                "use_vision": "boolean (default: true)"
+            }
+        },
+        {
+            "name": "command.execute_plan",
+            "description": "Runs end-to-end NLP->plan->execution on a target device with retries and confidence gating.",
+            "parameters": {
+                "input": "string",
+                "device_id": "string (default: android_phone)",
+                "use_vision": "boolean (default: true)",
+                "retry_limit": "integer (default: 2)",
+                "confidence_gate": "float 0..1 (default: 0.45)"
+            }
+        },
+        {
             "name": "system.ask",
             "description": "Safely interrupts the task to ask the user for information or confirmation. Returns the user's text response.",
             "parameters": {
