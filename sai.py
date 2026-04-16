@@ -202,19 +202,39 @@ class SAI:
                 observation = str(action_result)
                 
                 # ── Device-Failure Fast-Break ──
-                _is_device_failure = (
-                    isinstance(action_result, dict)
-                    and action_result.get("status") in ("failed", "error")
-                    and action_result.get("error", "") in (
+                # Catches ALL indicators that the Android device can't be reached:
+                # 1. "queued" = device is offline, command was NOT executed
+                # 2. "failed"/"error" with device-related error codes
+                # 3. Vision parse failures = device screenshot unavailable
+                _is_device_failure = False
+                if isinstance(action_result, dict):
+                    result_status = action_result.get("status", "")
+                    result_error = action_result.get("error", "")
+                    result_msg = action_result.get("message", "")
+
+                    # Queued = device offline, command never executed
+                    if result_status == "queued":
+                        _is_device_failure = True
+
+                    # Explicit device-related error codes
+                    elif result_status in ("failed", "error") and result_error in (
                         "DEVICE_UNREACHABLE", "DEVICE_UNHEALTHY",
                         "COMMAND_TIMEOUT", "NO_COMM_LAYER", "DISPATCH_ERROR",
-                    )
-                )
+                    ):
+                        _is_device_failure = True
+
+                    # Vision/screenshot failures indicating device unreachable
+                    elif result_status == "failed" and any(kw in result_msg.lower() for kw in (
+                        "no screenshot", "no screen text", "device", "companion",
+                    )):
+                        _is_device_failure = True
+
                 if _is_device_failure:
                     _device_failures += 1
+                    _fail_reason = action_result.get("error") or action_result.get("status", "unknown")
                     self.logger.warning(
-                        "Device failure %d/2 detected: %s",
-                        _device_failures, action_result.get("error")
+                        "Device failure %d/2 detected (tool=%s, reason=%s)",
+                        _device_failures, tool_name, _fail_reason
                     )
                     if _device_failures >= 2:
                         print("⚠️  Sir, the target device appears to be unreachable.")
