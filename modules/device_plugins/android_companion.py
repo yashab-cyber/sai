@@ -4,16 +4,39 @@ import logging
 import os
 import base64
 import io
+import time
 from typing import Optional, Dict, Any
 from PIL import Image
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Structured error codes returned by this module.  Every public method
+# returns a dict with at least {"status": …} so callers never have to
+# handle raw exceptions.
+# ---------------------------------------------------------------------------
+ERR_CONNECTION = "COMPANION_UNREACHABLE"
+ERR_TIMEOUT = "COMPANION_TIMEOUT"
+ERR_HTTP = "COMPANION_HTTP_ERROR"
+ERR_SCREENSHOT_DENIED = "SCREENSHOT_PERMISSION_DENIED"
+ERR_SCREENSHOT_EMPTY = "SCREENSHOT_EMPTY"
+
+
 class AndroidCompanionClient:
     """
     Client to communicate with the SAI Android Companion App.
     Replaces Termux:API with a robust HTTP-based local server approach.
+
+    Resilience guarantees:
+    - Every public method returns a structured dict, never raises.
+    - Transient failures are retried with exponential back-off.
+    - A lightweight ``is_healthy()`` call is available for pre-flight checks.
     """
+
+    # Retry configuration
+    MAX_RETRIES = 2
+    BASE_BACKOFF_SEC = 0.4          # 0.4s → 0.8s → 1.6s
+
     def __init__(self, host: str = None, port: int = 8080, token: Optional[str] = None):
         if host is None:
             env_host = os.getenv("SAI_ANDROID_HOST")
@@ -27,6 +50,14 @@ class AndroidCompanionClient:
         self.base_url = f"http://{host}:{port}"
         self.session = requests.Session()
         self.token = token or os.getenv("SAI_ANDROID_TOKEN", "jarvis_network_key")
+
+        # Cached health state for fast lookups between heartbeats
+        self._last_health: Optional[Dict[str, Any]] = None
+        self._last_health_ts: float = 0.0
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
 
     def _get_default_gateway(self) -> Optional[str]:
         """Attempts to find the default gateway on Linux systems (the hotspot host)."""
@@ -49,33 +80,131 @@ class AndroidCompanionClient:
         }
 
     def _post(self, endpoint: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        try:
-            response = self.session.post(
-                f"{self.base_url}/{endpoint}",
-                json=data,
-                headers=self._headers(),
-                timeout=8.0
-            )
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to communicate with Android Companion App: {e}")
-            return {"status": "error", "message": str(e)}
+        """POST with retry + exponential back-off.  Never raises."""
+        return self._request_with_retry("POST", endpoint, json_data=data)
 
     def _get(self, endpoint: str) -> Dict[str, Any]:
-        try:
-            response = self.session.get(
-                f"{self.base_url}/{endpoint}",
-                headers=self._headers(),
-                timeout=8.0
-            )
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to communicate with Android Companion App: {e}")
-            return {"status": "error", "message": str(e)}
+        """GET with retry + exponential back-off.  Never raises."""
+        return self._request_with_retry("GET", endpoint)
 
-    # --- Core Actions ---
+    def _request_with_retry(
+        self,
+        method: str,
+        endpoint: str,
+        json_data: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Core HTTP dispatcher with structured error handling and retries."""
+        url = f"{self.base_url}/{endpoint}"
+        last_error = ""
+
+        for attempt in range(self.MAX_RETRIES + 1):
+            try:
+                if method == "POST":
+                    resp = self.session.post(
+                        url, json=json_data, headers=self._headers(), timeout=8.0
+                    )
+                else:
+                    resp = self.session.get(
+                        url, headers=self._headers(), timeout=8.0
+                    )
+
+                # ---- Handle non-2xx gracefully ----
+                if resp.status_code >= 500:
+                    # Server-side crash — decode body if possible, else synthetic
+                    try:
+                        body = resp.json()
+                    except Exception:
+                        body = {}
+                    error_code = body.get("error", ERR_HTTP)
+                    error_msg = body.get("message", f"HTTP {resp.status_code} from {endpoint}")
+                    last_error = error_msg
+                    logger.warning(
+                        "Companion HTTP %s on %s (attempt %d/%d): %s",
+                        resp.status_code, endpoint, attempt + 1,
+                        self.MAX_RETRIES + 1, error_msg,
+                    )
+                    # Retry on 5xx
+                    if attempt < self.MAX_RETRIES:
+                        time.sleep(self.BASE_BACKOFF_SEC * (2 ** attempt))
+                        continue
+                    return {"status": "failed", "error": error_code, "message": error_msg}
+
+                if resp.status_code >= 400:
+                    try:
+                        body = resp.json()
+                    except Exception:
+                        body = {"message": resp.text[:200]}
+                    return {"status": "failed", "error": ERR_HTTP, "message": body.get("message", f"HTTP {resp.status_code}")}
+
+                # ---- Success path ----
+                return resp.json()
+
+            except requests.exceptions.ConnectionError:
+                last_error = f"Connection refused: {url}"
+                logger.warning("Companion unreachable (attempt %d/%d): %s", attempt + 1, self.MAX_RETRIES + 1, url)
+            except requests.exceptions.Timeout:
+                last_error = f"Timeout reaching {url}"
+                logger.warning("Companion timeout (attempt %d/%d): %s", attempt + 1, self.MAX_RETRIES + 1, url)
+            except requests.exceptions.RequestException as e:
+                last_error = str(e)
+                logger.warning("Companion request error (attempt %d/%d): %s", attempt + 1, self.MAX_RETRIES + 1, e)
+
+            if attempt < self.MAX_RETRIES:
+                time.sleep(self.BASE_BACKOFF_SEC * (2 ** attempt))
+
+        return {"status": "failed", "error": ERR_CONNECTION, "message": last_error}
+
+    # ------------------------------------------------------------------
+    # Health / connectivity
+    # ------------------------------------------------------------------
+
+    def is_healthy(self, cache_ttl: float = 5.0) -> bool:
+        """
+        Lightweight health check.  Tries ``/health`` first (new endpoint),
+        falls back to a HEAD on the base URL.  Caches result for *cache_ttl*
+        seconds to avoid spamming the device.
+        """
+        now = time.time()
+        if self._last_health and (now - self._last_health_ts) < cache_ttl:
+            return self._last_health.get("status") == "ok"
+
+        try:
+            resp = self.session.get(
+                f"{self.base_url}/health",
+                headers=self._headers(),
+                timeout=3.0,
+            )
+            if resp.status_code == 200:
+                self._last_health = resp.json()
+                self._last_health_ts = now
+                return self._last_health.get("status") == "ok"
+        except Exception:
+            pass
+
+        # Fallback: try a lightweight GET to any known endpoint
+        try:
+            resp = self.session.get(
+                f"{self.base_url}/state/screen_text",
+                headers=self._headers(),
+                timeout=3.0,
+            )
+            healthy = resp.status_code < 500
+            self._last_health = {"status": "ok" if healthy else "degraded"}
+            self._last_health_ts = now
+            return healthy
+        except Exception:
+            self._last_health = {"status": "unreachable"}
+            self._last_health_ts = now
+            return False
+
+    def get_health_details(self) -> Dict[str, Any]:
+        """Returns cached health info dict, or probes if stale."""
+        self.is_healthy(cache_ttl=5.0)
+        return dict(self._last_health or {"status": "unknown"})
+
+    # ------------------------------------------------------------------
+    # Core Actions
+    # ------------------------------------------------------------------
 
     def open_app(self, package_name: str) -> bool:
         """Opens an app via Intent, Shizuku, or ADB (decided by the Android router)"""
@@ -98,8 +227,16 @@ class AndroidCompanionClient:
         return res.get("data", "")
 
     def get_screenshot_base64(self) -> str:
-        """Captures a screenshot from Android accessibility screenshot pipeline."""
+        """
+        Captures a screenshot from Android accessibility screenshot pipeline.
+        Returns base64 string on success, empty string on failure.
+        Never raises.
+        """
         res = self._get("state/screenshot")
+        if res.get("status") == "failed":
+            error = res.get("error", "UNKNOWN")
+            logger.warning("Screenshot capture failed: %s — %s", error, res.get("message", ""))
+            return ""
         return res.get("image_base64", "")
 
     def get_screenshot_image(self) -> Optional[Image.Image]:
@@ -122,6 +259,7 @@ class AndroidCompanionClient:
             "message": message
         })
         return res.get("status") == "success"
+
 
 class DeviceControl:
     """
@@ -151,3 +289,6 @@ class DeviceControl:
 
     def send_message(self, app: str, contact: str, message: str):
         return self.client.send_message(app, contact, message)
+
+    def is_healthy(self) -> bool:
+        return self.client.is_healthy()

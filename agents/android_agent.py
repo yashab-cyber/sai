@@ -221,8 +221,27 @@ def _vision_stream_loop():
             logger.debug("Vision stream publish skipped: %s", exc)
         time.sleep(VISION_STREAM_INTERVAL_SEC)
 
+
+HEARTBEAT_INTERVAL_SEC = 10.0
+
+def _heartbeat_loop():
+    """Sends a lightweight heartbeat to the Hub so it knows we're alive."""
+    while True:
+        try:
+            if sio.connected and is_registered:
+                sio.emit(
+                    'heartbeat',
+                    {"device_id": DEVICE_ID, "ts": int(time.time())},
+                    namespace='/agent'
+                )
+        except Exception as exc:
+            logger.debug("Heartbeat skipped: %s", exc)
+        time.sleep(HEARTBEAT_INTERVAL_SEC)
+
+
 if __name__ == "__main__":
     threading.Thread(target=_vision_stream_loop, daemon=True).start()
+    threading.Thread(target=_heartbeat_loop, daemon=True).start()
     while True:
         try:
             logger.info("Connecting to %s", ACTUAL_HUB_URL)

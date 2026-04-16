@@ -5,7 +5,7 @@ system:
 
 safety:
   level: ${SAI_SAFETY_LEVEL:-STRICT}
-  base_dir: ${SAI_BASE_DIR:-/workspaces/sai}
+  base_dir: ${SAI_BASE_DIR:-/home/kali}
   allow_self_modification: ${SAI_ALLOW_SELF_MOD:-true}
 
 brain:

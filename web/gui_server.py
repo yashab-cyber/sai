@@ -115,6 +115,8 @@ def handle_vision_stream(data):
         sai = app.config.get('SAI_INSTANCE')
         if hasattr(sai, 'device_manager'):
             sai.device_manager.latest_frames[device_id] = frame_b64
+            # Update last_seen — vision frames count as heartbeat
+            sai.device_manager.receive_heartbeat(device_id)
             # Forward the frame to the frontend for real-time monitoring
             socketio.emit('device_vision_update', {"device_id": device_id, "frame": frame_b64}, namespace='/')
 
@@ -128,6 +130,15 @@ def handle_vision_stream(data):
                 },
                 namespace='/'
             )
+
+
+@socketio.on('heartbeat', namespace='/agent')
+def handle_agent_heartbeat(data):
+    """Lightweight heartbeat from agents — keeps device marked as online."""
+    device_id = data.get("device_id") if isinstance(data, dict) else None
+    if device_id and sai_instance and hasattr(sai_instance, 'device_manager'):
+        sai_instance.device_manager.receive_heartbeat(device_id)
+
 
 
 @app.route('/api/vision/latest', methods=['GET'])
@@ -288,6 +299,9 @@ class GUIManager:
                 else:
                     raise Exception(f"No active socket session for {device_id}")
             self.sai.device_manager.on_command_dispatch = _dispatch
+
+            # Start the device heartbeat monitor
+            self.sai.device_manager.start_heartbeat()
 
         self.logger.info(f"SAI COCKPIT ONLINE at http://localhost:{self.port} and http://{get_local_ip()}:{self.port}")
         return {"status": "success", "url": f"http://{get_local_ip()}:{self.port}"}

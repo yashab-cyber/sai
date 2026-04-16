@@ -13,10 +13,25 @@ import uuid
 from typing import Dict, Any, Optional
 from core.memory import MemoryManager
 
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+HEARTBEAT_INTERVAL_SEC = 10          # How often we check registered devices
+HEARTBEAT_MISS_LIMIT = 3            # Mark offline after N consecutive misses
+COMMAND_QUEUE_LIMIT = 10            # Max queued commands per device
+STALE_THRESHOLD_SEC = 30            # Consider device stale after this many seconds
+
+
 class DeviceManager:
     """
     Registry for connected remote agents (Windows, Android, etc.) across the local network.
     Manages state and acts as a router for commands.
+
+    Resilience improvements:
+    - Active heartbeat probing of registered devices
+    - Queue size limits to prevent infinite command accumulation
+    - ``is_device_healthy()`` method for pre-flight checks
+    - Commands to offline/unhealthy devices are rejected, not silently queued
     """
     
     def __init__(self):
@@ -29,6 +44,113 @@ class DeviceManager:
         self.on_command_dispatch = None
         self.memory = MemoryManager("logs/sai_memory.db")
 
+        # Heartbeat tracking
+        self._heartbeat_misses: Dict[str, int] = {}
+        self._heartbeat_thread: Optional[threading.Thread] = None
+        self._heartbeat_running = False
+
+    # ------------------------------------------------------------------
+    # Heartbeat system
+    # ------------------------------------------------------------------
+
+    def start_heartbeat(self):
+        """Start the background heartbeat thread that monitors device health."""
+        if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+            return
+        self._heartbeat_running = True
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop, daemon=True, name="DeviceHeartbeat"
+        )
+        self._heartbeat_thread.start()
+        self.logger.info("Device heartbeat monitor started (interval=%ds)", HEARTBEAT_INTERVAL_SEC)
+
+    def stop_heartbeat(self):
+        self._heartbeat_running = False
+
+    def _heartbeat_loop(self):
+        """Periodically probes all registered devices and marks them online/offline."""
+        while self._heartbeat_running:
+            try:
+                with self.lock:
+                    device_snapshot = dict(self.devices)
+
+                for device_id, info in device_snapshot.items():
+                    if info.get("status") == "online":
+                        if not self._probe_device(device_id, info):
+                            misses = self._heartbeat_misses.get(device_id, 0) + 1
+                            self._heartbeat_misses[device_id] = misses
+                            if misses >= HEARTBEAT_MISS_LIMIT:
+                                self.logger.warning(
+                                    "Device '%s' missed %d heartbeats — marking offline.",
+                                    device_id, misses
+                                )
+                                self.unregister_device(device_id)
+                        else:
+                            self._heartbeat_misses[device_id] = 0
+                            with self.lock:
+                                if device_id in self.devices:
+                                    self.devices[device_id]["last_seen"] = time.time()
+
+            except Exception as exc:
+                self.logger.debug("Heartbeat loop error: %s", exc)
+
+            time.sleep(HEARTBEAT_INTERVAL_SEC)
+
+    def _probe_device(self, device_id: str, info: Dict[str, Any]) -> bool:
+        """Try to reach the device via its companion HTTP health endpoint."""
+        try:
+            from modules.device_plugins.android_companion import AndroidCompanionClient
+            ip = info.get("ip", "127.0.0.1")
+            client = AndroidCompanionClient(host=ip)
+            return client.is_healthy(cache_ttl=0)  # Force fresh probe
+        except Exception:
+            return False
+
+    def receive_heartbeat(self, device_id: str):
+        """Called when a device sends a heartbeat via WebSocket."""
+        with self.lock:
+            if device_id in self.devices:
+                self.devices[device_id]["last_seen"] = time.time()
+                self.devices[device_id]["status"] = "online"
+                self._heartbeat_misses[device_id] = 0
+
+    # ------------------------------------------------------------------
+    # Device health
+    # ------------------------------------------------------------------
+
+    def is_device_healthy(self, device_id: str) -> bool:
+        """
+        Pre-flight check: is the device registered, online, and recently seen?
+        Use this before attempting expensive operations.
+        """
+        with self.lock:
+            if device_id not in self.devices:
+                return False
+            info = self.devices[device_id]
+            if info.get("status") != "online":
+                return False
+            last_seen = info.get("last_seen", 0)
+            if (time.time() - last_seen) > STALE_THRESHOLD_SEC:
+                return False
+            return True
+
+    def get_device_status(self, device_id: str) -> str:
+        """Returns 'online', 'offline', 'stale', or 'unknown'."""
+        with self.lock:
+            if device_id not in self.devices:
+                return "unknown"
+            info = self.devices[device_id]
+            if info.get("status") != "online":
+                return "offline"
+            last_seen = info.get("last_seen", 0)
+            if (time.time() - last_seen) > STALE_THRESHOLD_SEC:
+                return "stale"
+            return "online"
+
+    # ------------------------------------------------------------------
+    # Registration
+    # ------------------------------------------------------------------
+
     def register_device(self, device_id: str, device_type: str, ip_address: str) -> bool:
         """Registers a device when it connects and processes any queued tasks."""
         with self.lock:
@@ -40,6 +162,7 @@ class DeviceManager:
             }
             if device_id not in self.command_queues:
                 self.command_queues[device_id] = []
+            self._heartbeat_misses[device_id] = 0
         self.logger.info(f"Device registered: {device_id} ({device_type}) at {ip_address}")
         
         # Process task queue on reconnection
@@ -65,10 +188,14 @@ class DeviceManager:
     def list_devices(self) -> Dict[str, Any]:
         """Provides the AI with a list of currently known devices on the network."""
         with self.lock:
-            return {"status": "success", "devices": self.devices}
+            return {"status": "success", "devices": dict(self.devices)}
+
+    # ------------------------------------------------------------------
+    # Command routing
+    # ------------------------------------------------------------------
 
     def route_command(self, device_id: str, command: str, params: Dict[str, Any], timeout: int = 15) -> Dict[str, Any]:
-        """Routes a command. If the device is offline, it queues the command automatically."""
+        """Routes a command. If the device is offline, it queues the command (up to limit)."""
         started_at = time.time()
 
         # Lightweight command safety guardrail
@@ -110,18 +237,48 @@ class DeviceManager:
 
         with self.lock:
             if device_id not in self.devices or self.devices[device_id]["status"] != "online":
+                # ---- QUEUE LIMIT CHECK ----
                 if device_id not in self.command_queues:
                     self.command_queues[device_id] = []
-                self.command_queues[device_id].append({
+                queue = self.command_queues[device_id]
+
+                if len(queue) >= COMMAND_QUEUE_LIMIT:
+                    self.logger.warning(
+                        "Device '%s' offline and queue full (%d items). Refusing command '%s'.",
+                        device_id, len(queue), command
+                    )
+                    response = {
+                        "status": "failed",
+                        "action": command,
+                        "error": "DEVICE_UNREACHABLE",
+                        "message": f"Device '{device_id}' is offline and command queue is full ({COMMAND_QUEUE_LIMIT} items).",
+                        "timestamp": int(time.time()),
+                        "screen_data": {
+                            "text": "",
+                            "elements": [],
+                            "activity": "unknown",
+                            "package": "unknown"
+                        }
+                    }
+                    self.memory.log_action(
+                        device_id=device_id,
+                        action=command,
+                        request_obj={"params": params, "timeout": timeout},
+                        response_obj=response,
+                        latency_ms=int((time.time() - started_at) * 1000)
+                    )
+                    return response
+
+                queue.append({
                     "command": command,
                     "params": params,
                     "timeout": timeout
                 })
-                self.logger.info(f"Device '{device_id}' offline. Queued command '{command}'.")
+                self.logger.info(f"Device '{device_id}' offline. Queued command '{command}' ({len(queue)}/{COMMAND_QUEUE_LIMIT}).")
                 response = {
                     "status": "queued",
                     "action": command,
-                    "message": f"Command '{command}' queued automatically.",
+                    "message": f"Command '{command}' queued automatically ({len(queue)}/{COMMAND_QUEUE_LIMIT}).",
                     "timestamp": int(time.time()),
                     "screen_data": {
                         "text": "",
@@ -152,9 +309,13 @@ class DeviceManager:
                 self.on_command_dispatch(device_id, command_id, command, params)
             except Exception as e:
                 self.logger.error(f"Dispatch failed: {e}")
-                return {"status": "error", "message": f"Failed to send to comm layer: {str(e)}"}
+                with self.lock:
+                    self.pending_commands.pop(command_id, None)
+                return {"status": "failed", "error": "DISPATCH_ERROR", "message": f"Failed to send to comm layer: {str(e)}"}
         else:
-            return {"status": "error", "message": "Communication layer not initialized."}
+            with self.lock:
+                self.pending_commands.pop(command_id, None)
+            return {"status": "failed", "error": "NO_COMM_LAYER", "message": "Communication layer not initialized."}
             
         success = event.wait(timeout)
         
@@ -163,6 +324,10 @@ class DeviceManager:
             
         if success and pending and pending["response"] is not None:
             response = pending["response"]
+            # Update last_seen on successful communication
+            with self.lock:
+                if device_id in self.devices:
+                    self.devices[device_id]["last_seen"] = time.time()
             self.memory.log_action(
                 device_id=device_id,
                 action=command,
@@ -177,18 +342,13 @@ class DeviceManager:
             )
             return response
         else:
-            # Retry logic: Re-queue if timed out
-            self.logger.warning(f"Command '{command}' to '{device_id}' timed out. Re-queuing.")
-            with self.lock:
-                self.command_queues[device_id].append({
-                    "command": command,
-                    "params": params,
-                    "timeout": timeout
-                })
+            # Timed out — DO NOT silently re-queue.  Return failure.
+            self.logger.warning(f"Command '{command}' to '{device_id}' timed out after {timeout}s.")
             response = {
                 "status": "failed",
                 "action": command,
-                "message": "Command timed out. Queued for retry.",
+                "error": "COMMAND_TIMEOUT",
+                "message": f"Command timed out after {timeout}s. Device may be unresponsive.",
                 "timestamp": int(time.time()),
                 "screen_data": {
                     "text": "",

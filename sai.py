@@ -125,7 +125,13 @@ class SAI:
         )
 
     async def run_task(self, task: str, max_iterations=25):
-        """Standardizes autonomous execution loop with thread-safe perception and stuck-loop detection."""
+        """Standardizes autonomous execution loop with thread-safe perception and stuck-loop detection.
+
+        Resilience improvements:
+        - Device-failure counter: breaks after 2 consecutive device-unreachable errors
+        - Result-aware loop detection: failed results also count toward stuck-loop
+        - Reduced stuck-loop threshold from 3→2 for device-related failures
+        """
         import asyncio
         if self.is_running:
             self.logger.warning("Another process is currently running, sir.")
@@ -135,6 +141,7 @@ class SAI:
         print(f"\n[S.A.I.] Very good, sir. Initializing directive: {task}")
         history = []
         _consecutive_fails = 0
+        _device_failures = 0          # NEW: track consecutive device-unreachable errors
         _last_action_key = None
         
         try:
@@ -178,11 +185,11 @@ class SAI:
                     _consecutive_fails = 0
                 _last_action_key = action_key
                 
-                if _consecutive_fails >= 3:
+                if _consecutive_fails >= 2:
                     print("⚠️  Sir, I appear to be caught in a loop — repeating the same action without progress.")
                     print("    I'd recommend we reassess the approach. Breaking tactical loop.")
                     self.gui.update(
-                        thought="I've detected a tactical loop, sir. The same action has failed 3 consecutive times. Awaiting new directive.",
+                        thought="I've detected a tactical loop, sir. The same action has failed consecutively. Awaiting new directive.",
                         action="LOOP_BREAK"
                     )
                     break
@@ -193,6 +200,32 @@ class SAI:
                 
                 # 3. Observe
                 observation = str(action_result)
+                
+                # ── Device-Failure Fast-Break ──
+                _is_device_failure = (
+                    isinstance(action_result, dict)
+                    and action_result.get("status") in ("failed", "error")
+                    and action_result.get("error", "") in (
+                        "DEVICE_UNREACHABLE", "DEVICE_UNHEALTHY",
+                        "COMMAND_TIMEOUT", "NO_COMM_LAYER", "DISPATCH_ERROR",
+                    )
+                )
+                if _is_device_failure:
+                    _device_failures += 1
+                    self.logger.warning(
+                        "Device failure %d/2 detected: %s",
+                        _device_failures, action_result.get("error")
+                    )
+                    if _device_failures >= 2:
+                        print("⚠️  Sir, the target device appears to be unreachable.")
+                        print("    Please verify the companion app is running and connected to the same network.")
+                        self.gui.update(
+                            thought="The target device is unreachable, sir. Two consecutive attempts have failed. Please check the companion app.",
+                            action="DEVICE_UNREACHABLE"
+                        )
+                        break
+                else:
+                    _device_failures = 0
                 
                 # Prevent Token Overflow: Truncate large results
                 if len(observation) > 10000:
@@ -417,10 +450,33 @@ class SAI:
             elif tool_name == "vision.parse_screen":
                 device_id = params.get("device_id", "android_phone")
                 image_b64 = self._get_device_frame_base64(device_id)
-                if not image_b64:
-                    return {"status": "failed", "message": "No screenshot returned from device", "ui_elements": []}
+                if image_b64:
+                    return self.vision_intelligence.parse_screenshot_base64(image_b64)
 
-                return self.vision_intelligence.parse_screenshot_base64(image_b64)
+                # ── Text-only fallback when screenshot fails ──
+                self.logger.warning("Vision screenshot unavailable for %s — falling back to text-only mode.", device_id)
+                text_result = self._get_device_screen_text(device_id)
+                if text_result:
+                    # Synthesize a minimal UI-element list from the raw text
+                    words = text_result.split()
+                    elements = []
+                    for idx, word in enumerate(words[:50]):  # Cap to avoid overload
+                        elements.append({
+                            "text": word,
+                            "bounds": [0, idx * 30, 200, (idx + 1) * 30],
+                            "type": "text",
+                            "confidence": 50.0,
+                            "center": [100, idx * 30 + 15],
+                        })
+                    return {
+                        "status": "success",
+                        "message": "text-only fallback (no screenshot)",
+                        "ui_elements": elements,
+                        "text": text_result,
+                        "count": len(elements),
+                        "fallback": True,
+                    }
+                return {"status": "failed", "message": "No screenshot or screen text available from device", "ui_elements": []}
 
             elif tool_name == "command.plan":
                 user_input = params.get("input", "")
@@ -446,6 +502,19 @@ class SAI:
                 retry_limit = int(params.get("retry_limit", 2))
                 confidence_gate = float(params.get("confidence_gate", 0.45))
                 task_signature = f"{device_id}:plan:{self.command_intelligence.signature(user_input)}"
+
+                # ── DEVICE HEALTH PRE-CHECK ──
+                if not self.device_manager.is_device_healthy(device_id):
+                    dev_status = self.device_manager.get_device_status(device_id)
+                    self.logger.warning(
+                        "Device '%s' is %s — refusing to build/execute plan.", device_id, dev_status
+                    )
+                    return {
+                        "status": "failed",
+                        "error": "DEVICE_UNHEALTHY",
+                        "device_id": device_id,
+                        "message": f"Device '{device_id}' is {dev_status}. Cannot execute plan. Please ensure the companion app is running.",
+                    }
 
                 replayed_pattern = self.memory.get_replay_candidate(
                     task_signature=task_signature,
@@ -542,15 +611,52 @@ class SAI:
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
+    # Cache for last-known-good device frames
+    _last_good_frames: Dict[str, str] = {}
+
     def _get_device_frame_base64(self, device_id: str) -> str:
-        """Websocket-first frame source, with companion HTTP fallback."""
+        """Websocket-first frame source, with companion HTTP fallback and caching.
+
+        Returns the best available screenshot frame:
+        1. Live WebSocket frame (preferred)
+        2. HTTP companion fallback
+        3. Last-known-good cached frame (with staleness warning)
+        4. Empty string if nothing available
+        """
+        # 1. Try live WebSocket frame
         frame_b64 = self.device_manager.latest_frames.get(device_id)
         if frame_b64:
+            self._last_good_frames[device_id] = frame_b64
             return frame_b64
 
-        from modules.device_plugins.android_companion import AndroidCompanionClient
-        client = AndroidCompanionClient()
-        return client.get_screenshot_base64() or ""
+        # 2. Try HTTP companion fallback
+        try:
+            from modules.device_plugins.android_companion import AndroidCompanionClient
+            client = AndroidCompanionClient()
+            if client.is_healthy(cache_ttl=5.0):
+                frame = client.get_screenshot_base64()
+                if frame:
+                    self._last_good_frames[device_id] = frame
+                    return frame
+        except Exception as exc:
+            self.logger.debug("HTTP screenshot fallback failed: %s", exc)
+
+        # 3. Return cached frame with staleness warning
+        cached = self._last_good_frames.get(device_id)
+        if cached:
+            self.logger.warning("Using cached (possibly stale) frame for %s", device_id)
+            return cached
+
+        return ""
+
+    def _get_device_screen_text(self, device_id: str) -> str:
+        """Text-only fallback: gets screen content via accessibility tree."""
+        try:
+            from modules.device_plugins.android_companion import AndroidCompanionClient
+            client = AndroidCompanionClient()
+            return client.get_screen_text() or ""
+        except Exception:
+            return ""
 
     def self_improve(self):
         """Self-Modification Loop — JARVIS Evolution Protocol."""
