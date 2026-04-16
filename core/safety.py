@@ -19,7 +19,8 @@ class SafetyManager:
         "os", "sys", "json", "time", "re", "math", "random", "logging", "typing", 
         "ast", "shutil", "sqlite3", "requests", "pyyaml", "pydantic", "pytest", 
         "flask", "psutil", "pynput", "pyautogui", "cv2", "pyttsx3", "speech_recognition",
-        "subprocess", "playwright", "flask_socketio", "eventlet", "threading", "pytesseract"
+        "subprocess", "playwright", "flask_socketio", "eventlet", "threading", "pytesseract",
+        "streamlit", "feedparser", "pytrends", "bs4", "plotly", "lxml"
     ]
 
     # Packages that can be installed/managed by executor
@@ -27,7 +28,7 @@ class SafetyManager:
         "requests", "pyyaml", "pydantic", "sqlite3", "pytest", "flask", "psutil",
         "pynput", "pyautogui", "opencv-python", "pyttsx3", "SpeechRecognition",
         "pyscreeze", "Pillow", "playwright", "pyee", "flask-socketio", "eventlet",
-        "pytesseract"
+        "pytesseract", "streamlit", "feedparser", "pytrends", "beautifulsoup4", "plotly", "lxml"
     ]
     
     # Whitelist of allowed shell commands
@@ -37,7 +38,7 @@ class SafetyManager:
         "mkdir", "rm", "cp", "mv", "touch", "chmod", "curl", "wget",
         "mousepad", "firefox", "chromium", "gnome-terminal", "code",
         "wmctrl", "xdotool", "free", "df", "uptime", "pkill", "scrot", "sensors",
-        "pytest", "black", "flake8", "tsc", "eslint", "vite"
+        "pytest", "black", "flake8", "tsc", "eslint", "vite", "streamlit"
     ]
 
     def __init__(self, base_dir: str):

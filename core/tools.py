@@ -260,6 +260,29 @@ class ToolManifest:
             }
         },
         {
+            "name": "intelligence.analyze",
+            "description": "Collects real-world data (news, trends, web), analyzes it with the LLM, generates a live Streamlit dashboard, and explains insights via voice. Use this for intelligence briefings, trend analysis, or market research.",
+            "parameters": {
+                "query": "string (e.g. 'AI trends', 'crypto market', 'cybersecurity news')",
+                "sources": "list of strings (optional, defaults to ['rss','news','trends']). Options: 'rss', 'news', 'trends', 'scrape'",
+                "narrate": "boolean (optional, default: true) — whether to speak insights"
+            }
+        },
+        {
+            "name": "intelligence.collect",
+            "description": "Collects world data (news, trends, web) without analysis or dashboard. Returns raw data points.",
+            "parameters": {
+                "query": "string",
+                "sources": "list of strings (optional)",
+                "max_items": "integer (optional, default: 30)"
+            }
+        },
+        {
+            "name": "intelligence.stop",
+            "description": "Stops the currently running intelligence dashboard.",
+            "parameters": {}
+        },
+        {
             "name": "browser.search",
             "description": "Performs a web search via DuckDuckGo and returns the results page title.",
             "parameters": {

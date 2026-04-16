@@ -44,6 +44,7 @@ from modules.device_manager import DeviceManager
 from modules.command_intelligence import CommandIntelligence
 from modules.vision_intelligence import VisionIntelligence
 from modules.plan_executor import PlanExecutor
+from modules.intelligence.engine import IntelligenceEngine
 
 class SAI:
     """
@@ -94,6 +95,7 @@ class SAI:
         self.system = SystemManager(self.executor)
         self.hud_window = HUDWindow()
         self.reflection = ReflectionEngine(self.brain, self.evolution)
+        self.intelligence = IntelligenceEngine(self)
         self.is_running = False
 
         # Auto-start the communication layer so Android agents can connect immediately.
@@ -660,6 +662,22 @@ class SAI:
                     "replayed": False,
                 }
             
+            # Intelligence Engine
+            elif tool_name == "intelligence.analyze":
+                return self.intelligence.analyze(
+                    query=params['query'],
+                    sources=params.get('sources'),
+                    narrate=params.get('narrate', True)
+                )
+            elif tool_name == "intelligence.collect":
+                return self.intelligence.collect_only(
+                    query=params['query'],
+                    sources=params.get('sources'),
+                    max_items=int(params.get('max_items', 30))
+                )
+            elif tool_name == "intelligence.stop":
+                return self.intelligence.stop_dashboard()
+
             elif tool_name == "system.ask":
                 print(f"\n[SAI PROMPT] {params['prompt']}")
                 user_res = input("Your response: ").strip()

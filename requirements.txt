@@ -21,8 +21,12 @@ flask-cors
 black
 flake8
 python-socketio
-
-
 zeroconf
 
-zeroconf
+# Intelligence Engine
+streamlit
+feedparser
+pytrends
+beautifulsoup4
+plotly
+lxml
