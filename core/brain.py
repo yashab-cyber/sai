@@ -53,6 +53,7 @@ class Brain:
             raise ValueError("OpenAI API key missing.")
             
         import openai
+        import time as _time
         client = openai.OpenAI(
             api_key=self.openai_key,
             base_url=self.openai_base_url
@@ -66,15 +67,29 @@ class Brain:
                 "image_url": {"url": f"data:image/png;base64,{base64_image}"}
             })
 
-        response = client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": f"{system_prompt}. Respond ONLY in valid JSON."},
-                {"role": "user", "content": content}
-            ],
-            response_format={"type": "json_object"}
-        )
-        return json.loads(response.choices[0].message.content)
+        messages = [
+            {"role": "system", "content": f"{system_prompt}. Respond ONLY in valid JSON."},
+            {"role": "user", "content": content}
+        ]
+
+        # Retry once on empty/null response (transient proxy issue)
+        for attempt in range(2):
+            response = client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                response_format={"type": "json_object"}
+            )
+            raw_content = response.choices[0].message.content
+            if raw_content and raw_content.strip():
+                return json.loads(raw_content)
+
+            self.logger.warning(
+                "LLM returned empty content (attempt %d/2). Retrying...", attempt + 1
+            )
+            if attempt < 1:
+                _time.sleep(1.0)
+
+        raise ValueError("LLM returned empty response after 2 attempts.")
 
     def _call_gemini(self, system_prompt: str, user_query: str, image_path: Optional[str] = None) -> Dict[str, Any]:
         """Implementation for Google Gemini API with Multimodal support."""

@@ -98,10 +98,6 @@ def handle_agent_connect(auth):
         return {"status": "error", "message": "Missing device_id"}
         
     ip_addr = request.remote_addr
-    if sai_instance and hasattr(sai_instance, 'safety'):
-        if not sai_instance.safety.is_ip_allowed(ip_addr):
-            return {"status": "error", "message": "IP Address not whitelisted"}
-            
     agent_sessions[device_id] = request.sid
     logging.getLogger("SAI.GUI").debug(f"AGENT_CONNECT: {device_id} mapped to SID={request.sid}")
     if sai_instance and hasattr(sai_instance, 'device_manager'):

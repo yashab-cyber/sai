@@ -52,10 +52,13 @@ class VisionManager:
             return {"status": "error", "message": str(e)}
 
     def capture_screen(self, filename: str = "logs/screenshot.png"):
-
         """Captures entire screen to a file."""
         try:
+            import os as _os
             path = filename
+            # Remove existing file to prevent scrot 'already exists' warnings
+            if _os.path.exists(path):
+                _os.remove(path)
             pyautogui.screenshot(path)
             self.logger.info(f"Screen captured to {path}")
             return {"status": "success", "path": path}

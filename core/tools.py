@@ -76,36 +76,6 @@ class ToolManifest:
             }
         },
         {
-            "name": "coder.replace_string",
-            "description": "Replaces an exact snippet of code with a new snippet. Use this for highly precise edits and refactors in any file type.",
-            "parameters": {
-                "path": "string",
-                "old_string": "string (the exact literal text to replace, including intact indentation/whitespace)",
-                "new_string": "string (the replacement text)"
-            }
-        },
-        {
-            "name": "coder.lint",
-            "description": "Runs flake8 on a python file to detect syntax and style errors.",
-            "parameters": {
-                "path": "string"
-            }
-        },
-        {
-            "name": "coder.format",
-            "description": "Runs black on a python file to auto-format it to standard PEP 8 style.",
-            "parameters": {
-                "path": "string"
-            }
-        },
-        {
-            "name": "coder.test",
-            "description": "Runs pytest on a given file or directory.",
-            "parameters": {
-                "path": "string"
-            }
-        },
-        {
             "name": "coder.write",
             "description": "Writes a new Python module with syntax validation.",
             "parameters": {

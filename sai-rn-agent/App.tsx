@@ -72,6 +72,7 @@ function App(): React.JSX.Element {
 
   // SAI Hub connection state
   const [hubConnected, setHubConnected] = useState(false);
+  const hubConnectedRef = useRef(false);
   const [hubIp, setHubIp] = useState('');
 
   const [token, setToken] = useState('jarvis_network_key');
@@ -110,10 +111,12 @@ function App(): React.JSX.Element {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json();
-        const wasConnected = hubConnected;
-        setHubConnected(data.connected === true);
+        const wasConnected = hubConnectedRef.current;
+        const nowConnected = data.connected === true;
+        hubConnectedRef.current = nowConnected;
+        setHubConnected(nowConnected);
         setHubIp(data.hub_ip || '');
-        if (data.connected && !wasConnected) {
+        if (nowConnected && !wasConnected) {
           addLog(`SAI Hub connected from ${data.hub_ip}`);
         }
       } catch (_) {
@@ -170,10 +173,11 @@ function App(): React.JSX.Element {
       if (payload.status === 'success') {
         setVisionImageBase64(payload.image_base64 || '');
         setVisionElements(Array.isArray(payload?.screen_data?.elements) ? payload.screen_data.elements : []);
-        setVisionPackage(payload?.screen_data?.package || '—');
+        const pkg = payload?.screen_data?.package || '—';
+        setVisionPackage(pkg);
         const count = payload.screen_data.elements?.length || 0;
         setVisionStatus(`${count} elements detected`);
-        addLog(`Vision: ${count} UI elements found in ${visionPackage}`);
+        addLog(`Vision: ${count} UI elements found in ${pkg}`);
       } else {
         setVisionStatus(payload.message || 'Capture failed');
         addLog(`Vision failed: ${payload.message}`);

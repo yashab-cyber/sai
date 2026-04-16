@@ -149,7 +149,8 @@ class SAI:
         print(f"\n[S.A.I.] Very good, sir. Initializing directive: {task}")
         history = []
         _consecutive_fails = 0
-        _device_failures = 0          # NEW: track consecutive device-unreachable errors
+        _device_failures = 0          # track consecutive device-unreachable errors
+        _success_count = 0            # track successful actions for completion validation
         _last_action_key = None
         
         try:
@@ -178,6 +179,22 @@ class SAI:
                 print(f"  > Analysis: {thought}")
                 
                 if status == "completed":
+                    # ── False-Completion Guard ──
+                    # Reject 'completed' if no action has succeeded yet.
+                    # The LLM tends to give up and mark completed when device
+                    # actions fail, which is misleading.
+                    if _success_count == 0 and history:
+                        self.logger.warning(
+                            "LLM declared 'completed' but no action succeeded (%d history entries). "
+                            "Overriding to 'abandoned'.", len(history)
+                        )
+                        print("⚠️  Sir, I haven't managed to complete any actions successfully.")
+                        print("    The task cannot be marked as complete. Standing down.")
+                        self.gui.update(
+                            thought="No actions succeeded — task cannot be marked complete. Awaiting new directive, sir.",
+                            action="TASK_ABANDONED"
+                        )
+                        break
                     print("🏁 Objective achieved, sir. Standing by for further directives.")
                     break
                     
@@ -234,6 +251,7 @@ class SAI:
                     # Vision/screenshot failures indicating device unreachable
                     elif result_status == "failed" and any(kw in result_msg.lower() for kw in (
                         "no screenshot", "no screen text", "device", "companion",
+                        "direct http",  # Catch HTTP fallback failures
                     )):
                         _is_device_failure = True
 
@@ -254,6 +272,10 @@ class SAI:
                         break
                 else:
                     _device_failures = 0
+
+                # Track successful actions for completion validation
+                if isinstance(action_result, dict) and action_result.get("status") == "success":
+                    _success_count += 1
                 
                 # Prevent Token Overflow: Truncate large results
                 if len(observation) > 10000:
