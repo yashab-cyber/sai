@@ -73,5 +73,7 @@ class Analyzer:
                 for n in child.names:
                     imports.append(n.name)
             elif isinstance(child, ast.ImportFrom):
-                imports.append(f"{child.module}.{child.names[0].name}")
+                module = child.module or ""
+                for n in child.names:
+                    imports.append(f"{module}.{n.name}" if module else n.name)
         return ",".join(imports)

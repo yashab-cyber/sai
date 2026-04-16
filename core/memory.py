@@ -8,7 +8,27 @@ class MemoryManager:
     Persistence layer using SQLite.
     Stores task history, codebase awareness, and self-modification logs.
     """
-    
+
+    # Whitelisted table names to prevent SQL injection via dynamic table references
+    VALID_TABLES = {
+        "history", "codebase_map", "improvements",
+        "actions_history", "user_preferences", "learned_patterns",
+    }
+
+    # Whitelisted column names for search queries
+    VALID_COLUMNS = {
+        "task_id", "query", "plan", "action", "result", "status",
+        "file_path", "type", "name", "dependencies",
+        "module_name", "device_id", "key", "value",
+        "task_signature", "action_sequence",
+    }
+
+    def _validate_identifier(self, name: str, valid_set: set, kind: str = "identifier") -> str:
+        """Validates that a dynamic SQL identifier is in the whitelist."""
+        if name not in valid_set:
+            raise ValueError(f"Invalid SQL {kind}: '{name}'. Allowed: {valid_set}")
+        return name
+
     def __init__(self, db_path: str = "logs/sai_memory.db"):
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.db_path = db_path
@@ -92,6 +112,7 @@ class MemoryManager:
 
     def save_memory(self, table: str, data: Dict[str, Any]):
         """Saves a record to the specified table."""
+        table = self._validate_identifier(table, self.VALID_TABLES, "table")
         columns = ", ".join(data.keys())
         placeholders = ", ".join(["?"] * len(data))
         values = tuple(data.values())
@@ -102,6 +123,7 @@ class MemoryManager:
 
     def recall_memory(self, table: str, limit: int = 10) -> List[Dict[str, Any]]:
         """Recalls the most recent entries from a table."""
+        table = self._validate_identifier(table, self.VALID_TABLES, "table")
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -110,6 +132,8 @@ class MemoryManager:
 
     def search_memory(self, table: str, column: str, query: str) -> List[Dict[str, Any]]:
         """Searches memory for a specific term."""
+        table = self._validate_identifier(table, self.VALID_TABLES, "table")
+        column = self._validate_identifier(column, self.VALID_COLUMNS, "column")
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()

@@ -97,8 +97,12 @@ class EvolutionEngine:
 
     def rollback(self, module_name: str):
         """Restores a module from its backup."""
-        backup_path = f"modules/{module_name}.py.bak"
-        module_path = f"modules/{module_name}.py"
+        # Mirror the path logic from propose_improvement()
+        if "/" in module_name:
+            module_path = module_name
+        else:
+            module_path = f"modules/{module_name}.py"
+        backup_path = f"{module_path}.bak"
 
         if os.path.exists(backup_path):
             self.logger.warning(f"[Rollback] Initiating rollback for {module_name}...")

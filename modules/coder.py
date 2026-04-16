@@ -13,11 +13,10 @@ class Coder:
         self.executor = executor
         self.logger = logging.getLogger("SAI.Coder")
 
-    def write_module(self, path: str, code: str) -> bool:
+    def write_module(self, path: str, code: str) -> Dict[str, Any]:
         """Writes a new module to the workspace."""
         self.logger.info(f"Writing module at {path}")
-        result = self.executor.write_file(path, code)
-        return result["status"] == "success"
+        return self.executor.write_file(path, code)
 
     def replace_string(self, path: str, old_string: str, new_string: str) -> Dict[str, Any]:
         """Precise AST-independent string replacement for any file type."""

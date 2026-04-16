@@ -97,26 +97,3 @@ class InteractionEngine:
             
         return {"status": "error", "message": "Failed to verify action completion after max retries."}
 
-
-    def execute_with_verification(self, device_id: str, action_func, verify_func, max_retries: int = 3, delay: float = 3.0) -> dict:
-        """
-        Step 4/6: Feedback Loop Structure.
-        Executes a vision action and verifies if the expected screen state appears.
-        """
-        for attempt in range(max_retries):
-            # 1. Execute action (e.g. click Contact)
-            action_res = action_func()
-            if action_res.get("status") == "error":
-                self.logger.warning(f"Interaction attempt {attempt+1} action failed: {action_res}")
-            
-            # Allow time for screen/app to load
-            time.sleep(delay)
-            
-            # 2. Capture and Verify (e.g. check if Chat text is now visible)
-            if verify_func():
-                return {"status": "success", "message": f"Action succeeded and verified on attempt {attempt+1}"}
-                
-            self.logger.info(f"Verification failed on attempt {attempt+1}. Retrying...")
-            
-        return {"status": "error", "message": "Failed to verify action completion after max retries."}
-

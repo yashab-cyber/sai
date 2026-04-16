@@ -71,7 +71,7 @@ class SafetyManager:
         allowed = any(rel_path.startswith(p.strip("/")) for p in self.ALLOWED_WORKSPACES)
         if not allowed:
              # Basic files at root like requirements.txt or config.yaml are allowed
-             if os.path.dirname(rel_path) == ".":
+             if os.path.dirname(rel_path) == "":
                  return abs_path
              raise PermissionError(f"Access denied: {rel_path} is not in a permitted directory.")
 
@@ -110,14 +110,3 @@ class SafetyManager:
         self.logger.warning(f"BLOCKED unauthorized network IP: {ip}")
         return False
 
-    def is_ip_allowed(self, ip: str) -> bool:
-        """
-        Validates if an IP is allowed to connect to the SAI network.
-        By default, allows localhost and standard private subnets.
-        """
-        if ip == "127.0.0.1" or ip == "localhost":
-            return True
-        if ip.startswith("192.168.") or ip.startswith("10.") or ip.startswith("172."):
-            return True
-        self.logger.warning(f"BLOCKED unauthorized network IP: {ip}")
-        return False

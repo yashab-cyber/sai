@@ -25,13 +25,13 @@ def get_state():
 def custom_static(filename):
     return send_from_directory('../logs', filename)
 
-def run_flask(port=5000):
+def run_flask(port=5050):
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 class DashboardManager:
     """Manages the lifecycle of the SAI Web Dashboard."""
     
-    def __init__(self, port=5000):
+    def __init__(self, port=5050):
         self.port = port
         self.thread = None
         self.logger = logging.getLogger("SAI.Dashboard")

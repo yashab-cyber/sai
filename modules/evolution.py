@@ -19,7 +19,7 @@ class EvolutionEngine:
         self.coder = coder
         self.logger = logging.getLogger("SAI.Evolution")
 
-    def propose_improvement(self, module_name: str, new_code: str) -> bool:
+    def propose_improvement(self, module_name: str, new_code: str) -> Dict[str, Any]:
         """
         Validates and applies an improvement to a module.
         Includes a rollback mechanism.
@@ -31,9 +31,10 @@ class EvolutionEngine:
         self.logger.info(f"[Start] Proposing improvement for {module_name}...")
 
         # 1. Validation
-        if not self.coder.validate_code(new_code):
-            self.logger.error("[Fail] Improvement rejected due to invalid syntax.")
-            return False
+        is_valid, error_msg = self.coder.validate_code(new_code)
+        if not is_valid:
+            self.logger.error(f"[Fail] Improvement rejected due to invalid syntax: {error_msg}")
+            return {"status": "error", "message": f"Invalid syntax: {error_msg}"}
 
         # 2. Backup current version
         try:
@@ -55,16 +56,16 @@ class EvolutionEngine:
                     "metrics": "syntax_validated"
                 })
                 self.logger.info(f"[Success] Improvement applied to {module_name}.")
-                return True
+                return {"status": "success", "message": f"Improvement applied to {module_name}"}
             else:
                 self.logger.error(f"[Fail] Could not write improvement to {module_name}, triggering rollback.")
                 self.rollback(module_name)
-                return False
+                return {"status": "error", "message": f"Write failed for {module_name}"}
         
         except Exception as e:
             self.logger.error(f"[Critical] Modification failed due to exception: {str(e)}")
             self.rollback(module_name)
-            return False
+            return {"status": "error", "message": str(e)}
 
     def rollback(self, module_name: str):
         """Restores a module from its backup."""

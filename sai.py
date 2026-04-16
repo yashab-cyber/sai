@@ -97,6 +97,7 @@ class SAI:
         self.reflection = ReflectionEngine(self.brain, self.evolution)
         self.intelligence = IntelligenceEngine(self)
         self.is_running = False
+        self._last_good_frames: Dict[str, str] = {}  # Cache for last-known-good device frames
 
         # Auto-start the communication layer so Android agents can connect immediately.
         # Without this, CLI mode (python sai.py "task") has no SocketIO hub and
@@ -308,8 +309,8 @@ class SAI:
             self.reflection.reflect_on_task(task, history)
             self.gui.update(status="online")
             print("✅ Mission complete, sir. All systems nominal.")
-            self.is_running = False
         finally:
+            self.is_running = False
             self.logger.info("Cleaning up tactical logs...")
             self._cleanup_perception_logs()
             # Clean up the browser session for this specific thread
@@ -718,8 +719,6 @@ class SAI:
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    # Cache for last-known-good device frames
-    _last_good_frames: Dict[str, str] = {}
 
     def _get_device_frame_base64(self, device_id: str) -> str:
         """Websocket-first frame source, with companion HTTP fallback and caching.
