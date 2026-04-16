@@ -658,16 +658,16 @@ class SAI:
             elif tool_name == "system.open_mode":
                 mode = params['mode'].lower()
                 if mode == "research":
-                    self.execute_tool("executor.shell", {"command": "chromium &"})
-                    self.execute_tool("executor.shell", {"command": "mousepad &"})
+                    await self.execute_tool("executor.shell", {"command": "chromium &"})
+                    await self.execute_tool("executor.shell", {"command": "mousepad &"})
                     return {"status": "success", "message": "Research mode activated (Browser + Editor)."}
                 elif mode == "coding":
-                    self.execute_tool("executor.shell", {"command": "gnome-terminal &"})
-                    self.execute_tool("executor.shell", {"command": "code &"})
+                    await self.execute_tool("executor.shell", {"command": "gnome-terminal &"})
+                    await self.execute_tool("executor.shell", {"command": "code &"})
                     return {"status": "success", "message": "Coding mode activated (Terminal + VS Code)."}
                 elif mode == "writing":
-                    self.execute_tool("executor.shell", {"command": "chromium &"})
-                    self.execute_tool("executor.shell", {"command": "mousepad &"})
+                    await self.execute_tool("executor.shell", {"command": "chromium &"})
+                    await self.execute_tool("executor.shell", {"command": "mousepad &"})
                     return {"status": "success", "message": "Writing mode activated (Browser + Editor)."}
                 return {"status": "error", "message": f"Unknown mode: {mode}"}
                 

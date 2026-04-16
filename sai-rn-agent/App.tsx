@@ -70,6 +70,10 @@ function App(): React.JSX.Element {
   const [visionElements, setVisionElements] = useState<any[]>([]);
   const [visionPackage, setVisionPackage] = useState('—');
 
+  // SAI Hub connection state
+  const [hubConnected, setHubConnected] = useState(false);
+  const [hubIp, setHubIp] = useState('');
+
   const [token, setToken] = useState('jarvis_network_key');
   const [whitelist, setWhitelist] = useState('');
   const [port, setPort] = useState('8080');
@@ -92,6 +96,34 @@ function App(): React.JSX.Element {
     SaiDeviceControl.checkAccessibilityPermission()
       .then((enabled: boolean) => setHasAccessibility(enabled));
   }, []);
+
+  // Poll SAI Hub connection status every 5 seconds when server is running
+  useEffect(() => {
+    if (serverStatus !== 'running') {
+      setHubConnected(false);
+      setHubIp('');
+      return;
+    }
+    const pollHub = async () => {
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/status/hub`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        const wasConnected = hubConnected;
+        setHubConnected(data.connected === true);
+        setHubIp(data.hub_ip || '');
+        if (data.connected && !wasConnected) {
+          addLog(`SAI Hub connected from ${data.hub_ip}`);
+        }
+      } catch (_) {
+        setHubConnected(false);
+      }
+    };
+    pollHub();
+    const interval = setInterval(pollHub, 5000);
+    return () => clearInterval(interval);
+  }, [serverStatus, port, token]);
 
   const addLog = (msg: string) => {
     const ts = new Date().toLocaleTimeString('en-US', { hour12: false });
@@ -154,6 +186,8 @@ function App(): React.JSX.Element {
 
   const statusColor = serverStatus === 'running' ? '#00e5ff' : serverStatus === 'error' ? '#ff3d71' : '#576574';
   const statusText = serverStatus === 'running' ? 'ONLINE' : serverStatus === 'error' ? 'ERROR' : 'OFFLINE';
+  const hubColor = hubConnected ? '#00ff88' : '#576574';
+  const hubText = hubConnected ? 'HUB LINKED' : 'HUB WAITING';
 
   const glowColor = headerGlow.interpolate({
     inputRange: [0, 1],
@@ -171,6 +205,13 @@ function App(): React.JSX.Element {
         </View>
         <Text style={[styles.orbLabel, { color: statusColor }]}>{statusText}</Text>
         <Text style={styles.orbSub}>API Server · Port {port}</Text>
+        {serverStatus === 'running' && (
+          <View style={[styles.hubChip, { borderColor: hubColor, backgroundColor: hubConnected ? 'rgba(0,255,136,0.08)' : 'rgba(255,255,255,0.03)' }]}>
+            <View style={[styles.hubDot, { backgroundColor: hubColor }]} />
+            <Text style={[styles.hubChipText, { color: hubColor }]}>{hubText}</Text>
+            {hubConnected && <Text style={styles.hubIpText}>{hubIp}</Text>}
+          </View>
+        )}
       </View>
 
       {/* Action Buttons */}
@@ -198,6 +239,7 @@ function App(): React.JSX.Element {
         <MetricCard icon="🛡️" label="Accessibility" value={hasAccessibility ? 'ON' : 'OFF'} />
         <MetricCard icon="📡" label="Server" value={serverStatus === 'running' ? 'Active' : '—'} />
         <MetricCard icon="👁️" label="Vision" value={visionStatus === 'Idle' ? '—' : '✓'} />
+        <MetricCard icon="🔗" label="SAI Hub" value={hubConnected ? '✓' : '—'} />
       </View>
 
       {/* Accessibility Card */}
@@ -355,8 +397,15 @@ function App(): React.JSX.Element {
               <Text style={styles.headerSub}>COMPANION NODE</Text>
             </View>
           </View>
-          <View style={[styles.connChip, { borderColor: statusColor }]}>
-            <Text style={[styles.connText, { color: statusColor }]}>{statusText}</Text>
+          <View style={{flexDirection: 'row', alignItems: 'center', gap: 8}}>
+            {hubConnected && (
+              <View style={[styles.connChip, { borderColor: '#00ff88' }]}>
+                <Text style={[styles.connText, { color: '#00ff88' }]}>HUB</Text>
+              </View>
+            )}
+            <View style={[styles.connChip, { borderColor: statusColor }]}>
+              <Text style={[styles.connText, { color: statusColor }]}>{statusText}</Text>
+            </View>
           </View>
         </View>
       </Animated.View>
@@ -413,6 +462,12 @@ const styles = StyleSheet.create({
   orbLabel: { fontSize: 16, fontWeight: '800', letterSpacing: 4, marginTop: 16 },
   orbSub: { color: '#3d6b7f', fontSize: 11, marginTop: 4, letterSpacing: 1 },
   pulseRing: { position: 'absolute', width: 90, height: 90, borderRadius: 45, borderWidth: 2 },
+
+  // Hub Connection Chip
+  hubChip: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, borderWidth: 1 },
+  hubDot: { width: 7, height: 7, borderRadius: 4 },
+  hubChipText: { fontSize: 10, fontWeight: '700', letterSpacing: 2 },
+  hubIpText: { color: '#3d6b7f', fontSize: 9, letterSpacing: 0.5 },
 
   // Action Buttons
   actionRow: { flexDirection: 'row', gap: 12, marginBottom: 24 },

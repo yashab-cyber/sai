@@ -8,6 +8,9 @@ import time
 
 app = Flask(__name__)
 CORS(app)
+
+# Suppress werkzeug per-request INFO logs (GET /logs/hud.png spam)
+logging.getLogger('werkzeug').setLevel(logging.WARNING)
 # Allow CORS and provide a secret key for session/socket security
 app.config['SECRET_KEY'] = 'sai-ultra-secret'
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
@@ -294,7 +297,7 @@ class GUIManager:
                         "command": command,
                         "params": params
                     }, to=sid, namespace='/agent')
-                    socketio.sleep(0)  # Yield to eventlet so the packet flushes
+                    time.sleep(0)  # Yield thread so the packet flushes
                     self.logger.debug(f"DISPATCH: emit sent for {command_id}")
                 else:
                     raise Exception(f"No active socket session for {device_id}")

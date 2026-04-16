@@ -19,6 +19,13 @@ class SaiHttpServer(
     private val rateLimitWindowMs = 60_000L
     private val maxRequestsPerWindow = 120
 
+    // Track SAI Hub connection: timestamp + IP of last authenticated external request
+    @Volatile var lastHubRequestTs: Long = 0L
+        private set
+    @Volatile var lastHubIp: String = ""
+        private set
+    private val hubTimeoutMs = 30_000L  // Consider hub "connected" if request within 30s
+
     private fun isRateLimited(ip: String): Boolean {
         val now = System.currentTimeMillis()
         val timestamps = requestTimestamps.computeIfAbsent(ip) { mutableListOf() }
@@ -77,11 +84,24 @@ class SaiHttpServer(
     }
 
     private fun openApp(packageName: String): Boolean {
-        val launchIntent = reactContext.packageManager.getLaunchIntentForPackage(packageName)
-            ?: return false
-        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        reactContext.startActivity(launchIntent)
-        return true
+        return try {
+            val pm = reactContext.applicationContext.packageManager
+            val launchIntent = pm.getLaunchIntentForPackage(packageName)
+            if (launchIntent == null) {
+                android.util.Log.e("SaiHttpServer", "openApp: No launch intent for '$packageName' — app not installed?")
+                return false
+            }
+            launchIntent.addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+            )
+            reactContext.applicationContext.startActivity(launchIntent)
+            android.util.Log.i("SaiHttpServer", "openApp: Launched '$packageName' successfully")
+            true
+        } catch (e: Exception) {
+            android.util.Log.e("SaiHttpServer", "openApp: Failed to launch '$packageName': ${e.message}", e)
+            false
+        }
     }
 
     override fun serve(session: IHTTPSession): Response {
@@ -113,20 +133,48 @@ class SaiHttpServer(
                 )
             }
 
+            // Track external requests (non-localhost = SAI Hub)
+            val remoteIp = session.remoteIpAddress ?: ""
+            if (remoteIp != "127.0.0.1" && remoteIp != "::1") {
+                lastHubRequestTs = System.currentTimeMillis()
+                lastHubIp = remoteIp
+            }
+
             // ── Health Check Endpoint ──
             // Lightweight ping for SAI to verify the companion is alive.
             if (method == Method.GET && uri == "/health") {
                 val svc = SaiAccessibilityService.instance
+                val now = System.currentTimeMillis()
+                val hubConnected = lastHubRequestTs > 0 && (now - lastHubRequestTs) < hubTimeoutMs
                 val healthJson = JSONObject().apply {
                     put("status", "ok")
                     put("accessibility", svc != null)
                     put("screenshot_ready", svc != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
-                    put("timestamp", System.currentTimeMillis())
+                    put("hub_connected", hubConnected)
+                    put("hub_ip", if (hubConnected) lastHubIp else "")
+                    put("timestamp", now)
                 }
                 return newFixedLengthResponse(
                     Response.Status.OK,
                     "application/json",
                     healthJson.toString()
+                )
+            }
+
+            // ── Hub Status Endpoint (polled locally by the React Native app) ──
+            if (method == Method.GET && uri == "/status/hub") {
+                val now = System.currentTimeMillis()
+                val hubConnected = lastHubRequestTs > 0 && (now - lastHubRequestTs) < hubTimeoutMs
+                val hubJson = JSONObject().apply {
+                    put("connected", hubConnected)
+                    put("hub_ip", if (hubConnected) lastHubIp else "")
+                    put("last_request_ms", if (lastHubRequestTs > 0) now - lastHubRequestTs else -1)
+                    put("timestamp", now)
+                }
+                return newFixedLengthResponse(
+                    Response.Status.OK,
+                    "application/json",
+                    hubJson.toString()
                 )
             }
 
