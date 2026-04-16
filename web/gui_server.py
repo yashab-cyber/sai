@@ -23,6 +23,7 @@ state = {
     "cpu_load": "48%",
     "latency": "14ms"
 }
+voice_transcripts = []
 
 # The SAI instance will be injected after initialization
 sai_instance = None
@@ -66,6 +67,13 @@ def broadcast_state(new_state):
     """Update global state and broadcast to all connected clients."""
     state.update(new_state)
     socketio.emit('state_update', state)
+
+
+def add_voice_transcript(entry):
+    voice_transcripts.append(entry)
+    if len(voice_transcripts) > 100:
+        del voice_transcripts[:-100]
+    socketio.emit('voice_transcript_update', entry, namespace='/')
 
 
 # --- AGENT COMMUNICATION LAYER ---
@@ -143,6 +151,33 @@ def get_latest_vision():
         "frame": frame_b64,
         "parsed": parsed
     })
+
+
+@app.route('/api/voice/transcripts', methods=['GET'])
+def get_voice_transcripts():
+    limit = int(request.args.get("limit", 25))
+    limit = max(1, min(limit, 100))
+    return jsonify({
+        "status": "success",
+        "items": voice_transcripts[-limit:]
+    })
+
+
+@app.route('/api/devices', methods=['GET'])
+def get_devices():
+    sai = app.config.get('SAI_INSTANCE')
+    if not sai or not hasattr(sai, 'device_manager'):
+        return jsonify({"status": "error", "devices": []}), 500
+
+    devices_raw = sai.device_manager.list_devices().get('devices', {})
+    items = []
+    for device_id, meta in devices_raw.items():
+        items.append({
+            "device_id": device_id,
+            "device_type": meta.get("type", "unknown"),
+            "status": meta.get("status", "unknown")
+        })
+    return jsonify({"status": "success", "devices": items})
 
 @socketio.on('agent_response', namespace='/agent')
 
@@ -234,6 +269,7 @@ class GUIManager:
 
         # Voice Trigger Background Task (New)
         if hasattr(self.sai, 'voice'):
+            self.sai.voice.set_transcript_callback(add_voice_transcript)
             self.sai.voice.start_voice_trigger(self.sai.handle_voice_command)
 
         # Hook DeviceManager dispatch to SocketIO

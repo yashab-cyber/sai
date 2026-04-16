@@ -5,6 +5,13 @@ from typing import Dict, List, Any
 class CommandIntelligence:
     """Intent and task decomposition layer for SAI command routing."""
 
+    def signature(self, user_input: str) -> str:
+        """Creates a compact and stable signature for replay-memory indexing."""
+        normalized = re.sub(r"\s+", " ", (user_input or "").strip().lower())
+        normalized = re.sub(r"[^a-z0-9 ]", "", normalized)
+        tokens = normalized.split(" ")[:8]
+        return "_".join([t for t in tokens if t]) or "empty"
+
     def classify_intent(self, user_input: str) -> Dict[str, Any]:
         text = (user_input or "").strip().lower()
 

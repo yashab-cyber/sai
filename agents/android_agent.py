@@ -4,6 +4,8 @@ import socket
 import concurrent.futures
 import logging
 import threading
+import subprocess
+import re
 
 from modules.device_plugins.android_companion import DeviceControl
 
@@ -75,6 +77,36 @@ ACTUAL_HUB_URL = discover_hub()
 sio = socketio.Client()
 control = DeviceControl()
 
+
+def _local_shell(cmd: str) -> bool:
+    try:
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=6,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _local_open_app(package_name: str) -> bool:
+    return _local_shell(f"am start -n {package_name}/.MainActivity") or _local_shell(f"monkey -p {package_name} -c android.intent.category.LAUNCHER 1")
+
+
+def _local_tap(x: int, y: int) -> bool:
+    return _local_shell(f"input tap {int(x)} {int(y)}")
+
+
+def _local_type(text: str) -> bool:
+    safe = re.sub(r"\s+", "%s", str(text or "").strip())
+    if not safe:
+        return False
+    return _local_shell(f"input text '{safe}'")
+
 @sio.event(namespace='/agent')
 def connect():
     global is_registered
@@ -126,28 +158,43 @@ def on_execute(data):
         if command == "open_app":
             pkg = params.get("package", "com.whatsapp")
             success = control.open_app(pkg)
-            response = {"status": "success" if success else "error"}
+            transport = "companion_http"
+            if not success:
+                success = _local_open_app(pkg)
+                transport = "local_shell" if success else "failed"
+            response = {"status": "success" if success else "error", "transport": transport}
             
         elif command == "tap":
             x, y = params.get("x"), params.get("y")
             success = control.tap(x, y)
-            response = {"status": "success" if success else "error"}
+            transport = "companion_http"
+            if not success and x is not None and y is not None:
+                success = _local_tap(int(x), int(y))
+                transport = "local_shell" if success else "failed"
+            response = {"status": "success" if success else "error", "transport": transport}
             
         elif command == "type":
             text = params.get("text")
             success = control.type(text)
-            response = {"status": "success" if success else "error"}
+            transport = "companion_http"
+            if not success:
+                success = _local_type(text)
+                transport = "local_shell" if success else "failed"
+            response = {"status": "success" if success else "error", "transport": transport}
             
         elif command == "get_screen_text":
             text = control.get_screen_text()
-            response = {"status": "success", "data": text}
+            if text:
+                response = {"status": "success", "data": text, "transport": "companion_http"}
+            else:
+                response = {"status": "error", "message": "No screen text available", "transport": "failed"}
 
         elif command == "send_message":
             app = params.get("app")
             contact = params.get("contact")
             msg = params.get("message")
             success = control.send_message(app, contact, msg)
-            response = {"status": "success" if success else "error"}
+            response = {"status": "success" if success else "error", "transport": "companion_http"}
             
         else:
             response = {"status": "error", "message": f"Command '{command}' not implemented in new Android Agent."}

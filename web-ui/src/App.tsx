@@ -27,6 +27,12 @@ interface SaiState {
   history: Array<{ action: string; observation?: string } | string>;
 }
 
+interface VoiceTranscriptItem {
+  event: string;
+  text: string;
+  timestamp: number;
+}
+
 // ════════════════════════════════════════════════════════
 // 3D Holographic Core
 // ════════════════════════════════════════════════════════
@@ -208,6 +214,7 @@ export default function App() {
   const [uptime, setUptime] = useState(0);
   const [micState, setMicState] = useState<'idle' | 'active' | 'error'>('idle');
   const [devices, setDevices] = useState<{device_id: string, device_type: string, status: string}[]>([]);
+  const [voiceTranscripts, setVoiceTranscripts] = useState<VoiceTranscriptItem[]>([]);
 
   const historyEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -226,6 +233,17 @@ export default function App() {
   }, []);
 
   const socketRef = useRef<Socket | null>(null);
+
+  useEffect(() => {
+    fetch('/api/voice/transcripts?limit=20')
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'success' && Array.isArray(data.items)) {
+          setVoiceTranscripts(data.items);
+        }
+      })
+      .catch(() => null);
+  }, []);
 
   // Voice trigger (Web Speech API)
   useEffect(() => {
@@ -315,11 +333,15 @@ export default function App() {
     socket.on('state_update', (newState: Partial<SaiState>) => {
       setState(prev => ({ ...prev, ...newState }));
     });
+    socket.on('voice_transcript_update', (entry: VoiceTranscriptItem) => {
+      setVoiceTranscripts(prev => [...prev.slice(-39), entry]);
+    });
     socket.on('disconnect', () => setState(s => ({ ...s, status: 'offline' })));
 
     return () => {
       socket.off('connect');
       socket.off('state_update');
+      socket.off('voice_transcript_update');
       socket.off('disconnect');
       socket.disconnect();
     };
@@ -361,6 +383,11 @@ export default function App() {
 
   const formatTime = (d: Date) =>
     d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+  const formatTranscriptTs = (ts: number) => {
+    const d = new Date(ts * 1000);
+    return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  };
 
   // Module list
   const modules: ModuleInfo[] = [
@@ -640,6 +667,25 @@ export default function App() {
                 ))
               )}
               <div ref={historyEndRef} />
+            </div>
+
+            <div className="section-label flex items-center gap-2 mt-3">
+              <Mic size={10} style={{ color: 'var(--cyan)' }} />
+              VOICE TRANSCRIPT
+            </div>
+            <div className="max-h-28 overflow-y-auto custom-scrollbar flex flex-col gap-0.5">
+              {voiceTranscripts.length === 0 ? (
+                <div className="event-entry" style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                  No transcript yet...
+                </div>
+              ) : (
+                voiceTranscripts.slice(-8).map((entry, i) => (
+                  <div key={i} className="event-entry animate-fade-in flex items-start">
+                    <span className="timestamp">[{formatTranscriptTs(entry.timestamp)}]</span>
+                    <span className="event-text">{entry.event.toUpperCase()}: {entry.text}</span>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>

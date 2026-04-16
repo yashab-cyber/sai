@@ -50,6 +50,8 @@ class VoiceManager:
         self.is_busy = False
         self.stop_trigger = False
         self.trigger_thread = None
+        self.transcript_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+        self.wake_words = ["hi sai", "hey sai", "hello sai", "ok sai"]
         self.mic_available = _probe_microphone()
         
         if not self.mic_available:
@@ -146,6 +148,10 @@ class VoiceManager:
         self.trigger_thread.start()
         self.logger.info("Voice trigger system ('Hi SAI') active, sir.")
 
+    def set_transcript_callback(self, callback: Optional[Callable[[Dict[str, Any]], None]]):
+        """Registers a callback for transcript and wake-word events."""
+        self.transcript_callback = callback
+
     def stop_voice_trigger(self):
         """Stops background wake-word detection."""
         self.stop_trigger = True
@@ -169,9 +175,20 @@ class VoiceManager:
                         # Short burst listen for wake-word
                         audio = recognizer.listen(source, timeout=2, phrase_time_limit=2)
                         text = recognizer.recognize_google(audio).lower()
-                        
-                        if "hi sai" in text:
+
+                        self._emit_transcript("heard", text)
+
+                        if self._contains_wake_word(text):
                             self.logger.info("Wake-word detected!")
+                            self._emit_transcript("wake", text)
+
+                            inline_command = self._extract_inline_command(text)
+                            if inline_command:
+                                self.logger.info(f"Inline voice command: {inline_command}")
+                                self._emit_transcript("command", inline_command)
+                                callback(inline_command)
+                                continue
+
                             # Acknowledge
                             self.speak("Yes, sir?")
                             
@@ -179,8 +196,10 @@ class VoiceManager:
                             command_result = self.listen(timeout=8)
                             if command_result["status"] == "success":
                                 self.logger.info(f"Voice Command: {command_result['text']}")
+                                self._emit_transcript("command", command_result["text"])
                                 callback(command_result["text"])
                             else:
+                                self._emit_transcript("error", command_result.get("message", "Voice command capture failed"))
                                 self.speak("I'm sorry, sir, I didn't quite catch that.")
                             
             except (sr.WaitTimeoutError, sr.UnknownValueError):
@@ -189,3 +208,30 @@ class VoiceManager:
                 # Driver errors are common in loops; we log quietly
                 self.logger.debug(f"Trigger loop non-critical error: {e}")
                 time.sleep(2)
+
+    def _emit_transcript(self, event_type: str, text: str):
+        if not self.transcript_callback:
+            return
+        try:
+            self.transcript_callback({
+                "event": event_type,
+                "text": text,
+                "timestamp": int(time.time())
+            })
+        except Exception as exc:
+            self.logger.debug(f"Transcript callback failed: {exc}")
+
+    def _contains_wake_word(self, text: str) -> bool:
+        lowered = (text or "").lower()
+        return any(w in lowered for w in self.wake_words)
+
+    def _extract_inline_command(self, text: str) -> str:
+        lowered = (text or "").lower().strip()
+        for wake in self.wake_words:
+            if wake in lowered:
+                parts = lowered.split(wake, 1)
+                if len(parts) > 1:
+                    candidate = parts[1].strip(" ,:;.-")
+                    if candidate:
+                        return candidate
+        return ""

@@ -193,3 +193,44 @@ class MemoryManager:
                     (task_signature, action_seq_json, 1 if success else 0, 0 if success else 1)
                 )
             conn.commit()
+
+    def get_learned_pattern(self, task_signature: str) -> Optional[Dict[str, Any]]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT task_signature, action_sequence, success_count, failure_count, updated_at
+                FROM learned_patterns
+                WHERE task_signature = ?
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (task_signature,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            item = dict(row)
+            try:
+                item["action_sequence"] = json.loads(item.get("action_sequence") or "[]")
+            except Exception:
+                item["action_sequence"] = []
+            return item
+
+    def get_replay_candidate(self, task_signature: str, min_success: int = 2) -> Optional[Dict[str, Any]]:
+        """Returns a learned pattern only when reliability is high enough to shortcut planning."""
+        pattern = self.get_learned_pattern(task_signature)
+        if not pattern:
+            return None
+
+        success_count = int(pattern.get("success_count") or 0)
+        failure_count = int(pattern.get("failure_count") or 0)
+        if success_count < min_success:
+            return None
+        if success_count <= failure_count:
+            return None
+        if not pattern.get("action_sequence"):
+            return None
+        return pattern

@@ -416,10 +416,7 @@ class SAI:
 
             elif tool_name == "vision.parse_screen":
                 device_id = params.get("device_id", "android_phone")
-                from modules.device_plugins.android_companion import AndroidCompanionClient
-
-                client = AndroidCompanionClient()
-                image_b64 = client.get_screenshot_base64()
+                image_b64 = self._get_device_frame_base64(device_id)
                 if not image_b64:
                     return {"status": "failed", "message": "No screenshot returned from device", "ui_elements": []}
 
@@ -432,9 +429,7 @@ class SAI:
 
                 vision_data = None
                 if use_vision:
-                    from modules.device_plugins.android_companion import AndroidCompanionClient
-                    client = AndroidCompanionClient()
-                    image_b64 = client.get_screenshot_base64()
+                    image_b64 = self._get_device_frame_base64(device_id)
                     if image_b64:
                         vision_data = self.vision_intelligence.parse_screenshot_base64(image_b64)
 
@@ -450,12 +445,40 @@ class SAI:
                 device_id = params.get("device_id", "android_phone")
                 retry_limit = int(params.get("retry_limit", 2))
                 confidence_gate = float(params.get("confidence_gate", 0.45))
+                task_signature = f"{device_id}:plan:{self.command_intelligence.signature(user_input)}"
+
+                replayed_pattern = self.memory.get_replay_candidate(
+                    task_signature=task_signature,
+                    min_success=int(params.get("replay_min_success", 2))
+                )
+                if replayed_pattern:
+                    replay_plan = {
+                        "intent": "replay",
+                        "confidence": 0.99,
+                        "steps": replayed_pattern.get("action_sequence", [])
+                    }
+                    replay_execution = self.plan_executor.execute(
+                        device_id=device_id,
+                        plan=replay_plan,
+                        retry_limit=retry_limit,
+                        confidence_gate=confidence_gate,
+                    )
+                    self.memory.update_learned_pattern(
+                        task_signature=task_signature,
+                        action_sequence=replay_plan["steps"],
+                        success=replay_execution.get("status") == "success"
+                    )
+                    return {
+                        "status": replay_execution.get("status", "failed"),
+                        "device_id": device_id,
+                        "plan": replay_plan,
+                        "execution": replay_execution,
+                        "replayed": True,
+                    }
 
                 vision_data = None
                 if params.get("use_vision", True):
-                    from modules.device_plugins.android_companion import AndroidCompanionClient
-                    client = AndroidCompanionClient()
-                    image_b64 = client.get_screenshot_base64()
+                    image_b64 = self._get_device_frame_base64(device_id)
                     if image_b64:
                         vision_data = self.vision_intelligence.parse_screenshot_base64(image_b64)
 
@@ -466,11 +489,17 @@ class SAI:
                     retry_limit=retry_limit,
                     confidence_gate=confidence_gate,
                 )
+                self.memory.update_learned_pattern(
+                    task_signature=task_signature,
+                    action_sequence=plan.get("steps", []),
+                    success=executed.get("status") == "success"
+                )
                 return {
                     "status": executed.get("status", "failed"),
                     "device_id": device_id,
                     "plan": plan,
                     "execution": executed,
+                    "replayed": False,
                 }
             
             elif tool_name == "system.ask":
@@ -512,6 +541,16 @@ class SAI:
             return {"status": "error", "message": f"Missing parameter: {str(e)}"}
         except Exception as e:
             return {"status": "error", "message": str(e)}
+
+    def _get_device_frame_base64(self, device_id: str) -> str:
+        """Websocket-first frame source, with companion HTTP fallback."""
+        frame_b64 = self.device_manager.latest_frames.get(device_id)
+        if frame_b64:
+            return frame_b64
+
+        from modules.device_plugins.android_companion import AndroidCompanionClient
+        client = AndroidCompanionClient()
+        return client.get_screenshot_base64() or ""
 
     def self_improve(self):
         """Self-Modification Loop — JARVIS Evolution Protocol."""
