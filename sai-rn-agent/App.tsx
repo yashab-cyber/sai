@@ -466,7 +466,7 @@ const styles = StyleSheet.create({
 
   visionFrame: { width: '100%', height: 380, backgroundColor: '#000', borderRadius: 12, overflow: 'hidden', marginBottom: 10 },
   visionImg: { width: '100%', height: '100%' },
-  overlayLayer: { ...StyleSheet.absoluteFillObject },
+  overlayLayer: { ...StyleSheet.absoluteFill },
   overlayBox: { position: 'absolute', borderWidth: 1.5, borderColor: 'rgba(0,229,255,0.7)', backgroundColor: 'rgba(0,229,255,0.08)', borderRadius: 3 },
   visionCount: { color: '#3d6b7f', fontSize: 11, textAlign: 'center', letterSpacing: 1 },
 
