@@ -47,6 +47,7 @@ from modules.command_intelligence import CommandIntelligence
 from modules.vision_intelligence import VisionIntelligence
 from modules.plan_executor import PlanExecutor
 from modules.intelligence.engine import IntelligenceEngine
+from modules.tdd import TDDRunner
 
 class SAI:
     """
@@ -82,6 +83,7 @@ class SAI:
         self.command_intelligence = CommandIntelligence()
         self.vision_intelligence = VisionIntelligence()
         self.plan_executor = PlanExecutor(self)
+        self.tdd = TDDRunner(self)
 
 
         self.voice = VoiceManager(self)
@@ -388,6 +390,8 @@ class SAI:
                 return self.coder.format_code(params['path'])
             elif tool_name == "coder.test":
                 return self.coder.run_tests(params['path'])
+            elif tool_name == "coder.tdd":
+                return self.tdd.run_loop(params['objective'], params['path'])
             
             # Analyzer & Evolution
             elif tool_name == "analyzer.scan":

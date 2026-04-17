@@ -76,6 +76,14 @@ class ToolManifest:
             }
         },
         {
+            "name": "coder.tdd",
+            "description": "Runs an autonomous Test-Driven Development (TDD) loop. Drafts feature logic alongside a comprehensive pytest suite and attempts to recursively self-heal any stack traces until the suite passes.",
+            "parameters": {
+                "objective": "string (The requested feature and specifications)",
+                "path": "string (The target python file path, e.g. modules/math_module.py)"
+            }
+        },
+        {
             "name": "coder.write",
             "description": "Writes a new Python module with syntax validation.",
             "parameters": {
