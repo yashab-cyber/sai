@@ -13,6 +13,7 @@ class MemoryManager:
     VALID_TABLES = {
         "history", "codebase_map", "improvements",
         "actions_history", "user_preferences", "learned_patterns",
+        "semantic_memory",
     }
 
     # Whitelisted column names for search queries
@@ -106,6 +107,17 @@ class MemoryManager:
                     success_count INTEGER DEFAULT 0,
                     failure_count INTEGER DEFAULT 0,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Vector Semantic Database
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS semantic_memory (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content TEXT,
+                    metadata TEXT,
+                    embedding BLOB,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             conn.commit()
@@ -258,3 +270,62 @@ class MemoryManager:
         if not pattern.get("action_sequence"):
             return None
         return pattern
+
+    # ── VECTORS (Native RAG) ──
+    def save_semantic_memory(self, content: str, embedding: List[float], metadata: Optional[Dict[str, Any]] = None):
+        """Serializes and saves a vector to SQLite."""
+        import numpy as np
+        vector = np.array(embedding, dtype=np.float32)
+        blob = vector.tobytes()
+        meta_json = json.dumps(metadata or {}, ensure_ascii=False)
+        
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO semantic_memory (content, metadata, embedding) VALUES (?, ?, ?)",
+                (content, meta_json, blob)
+            )
+            conn.commit()
+
+    def search_semantic_memory(self, query_embedding: List[float], limit: int = 5, threshold: float = 0.5) -> List[Dict[str, Any]]:
+        """Calculates fast dot-product cosine similarity over all semantic records."""
+        import numpy as np
+        
+        # Query vector preparation
+        q_vec = np.array(query_embedding, dtype=np.float32)
+        q_norm = np.linalg.norm(q_vec)
+        if q_norm == 0:
+            return []
+            
+        results = []
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, content, metadata, embedding, timestamp FROM semantic_memory")
+            
+            for row in cursor.fetchall():
+                try:
+                    # Deserialize blob back to numpy array
+                    mem_vec = np.frombuffer(row["embedding"], dtype=np.float32)
+                    mem_norm = np.linalg.norm(mem_vec)
+                    
+                    if mem_norm == 0:
+                        continue
+                        
+                    # Cosine Similarity
+                    similarity = np.dot(q_vec, mem_vec) / (q_norm * mem_norm)
+                    
+                    if similarity >= threshold:
+                        results.append({
+                            "id": row["id"],
+                            "content": row["content"],
+                            "metadata": json.loads(row["metadata"]),
+                            "timestamp": row["timestamp"],
+                            "similarity": float(similarity)
+                        })
+                except Exception as e:
+                    # Skip corrupted vector data
+                    pass
+                    
+        # Sort aggressively by similarity score descending
+        results.sort(key=lambda x: x["similarity"], reverse=True)
+        return results[:limit]

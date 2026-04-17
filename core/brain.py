@@ -148,3 +148,51 @@ class Brain:
             task
         )
         return response.get("plan", ["Research", "Execute", "Verify"])
+        
+    def get_embedding(self, text: str) -> List[float]:
+        """Generates a high-dimensional vector representation of text for semantic memory."""
+        try:
+            if self.provider == "openai":
+                if not self.openai_key:
+                    raise ValueError("OpenAI API key missing.")
+                import openai
+                client = openai.OpenAI(api_key=self.openai_key, base_url=self.openai_base_url)
+                resp = client.embeddings.create(input=text, model="text-embedding-3-small")
+                return resp.data[0].embedding
+                
+            elif self.provider == "gemini":
+                if not self.gemini_key:
+                    raise ValueError("Gemini API key missing.")
+                import google.generativeai as genai
+                genai.configure(api_key=self.gemini_key)
+                result = genai.embed_content(
+                    model="models/embedding-001",
+                    content=text,
+                    task_type="retrieval_document"
+                )
+                return result['embedding']
+                
+            elif self.provider == "ollama":
+                payload = {
+                    "model": self.model,
+                    "prompt": text
+                }
+                resp = requests.post(f"{self.ollama_url}/api/embeddings", json=payload)
+                resp.raise_for_status()
+                return resp.json()["embedding"]
+                
+            else:
+                import random
+                import hashlib
+                seed = int(hashlib.md5(text.encode()).hexdigest(), 16)
+                random.seed(seed)
+                # Mock embedding (1536 dims to match standard embeddings)
+                return [random.uniform(-1.0, 1.0) for _ in range(1536)]
+                
+        except Exception as e:
+            self.logger.error(f"Embedding generation failed: {str(e)}")
+            import random
+            import hashlib
+            seed = int(hashlib.md5(text.encode()).hexdigest(), 16)
+            random.seed(seed)
+            return [random.uniform(-1.0, 1.0) for _ in range(1536)]

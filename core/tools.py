@@ -283,6 +283,29 @@ class ToolManifest:
             "parameters": {}
         },
         {
+            "name": "swarm.delegate",
+            "description": "Decomposes a massive project into subtasks and spawns asynchronous headless sub-agents to solve them in parallel. Use ONLY for multithreaded massive-scale tasks.",
+            "parameters": {
+                "task": "string (the overarching objective to delegate)"
+            }
+        },
+        {
+            "name": "memory.search_context",
+            "description": "Searches the central semantic vector database for past logs, code fragments, or research findings using meaning instead of keywords.",
+            "parameters": {
+                "query": "string (what to look for)",
+                "limit": "integer (optional, default: 5)"
+            }
+        },
+        {
+            "name": "memory.memorize",
+            "description": "Persists an important finding, rule, or code block directly into the semantic vector database for permanent cross-session recall.",
+            "parameters": {
+                "content": "string",
+                "metadata": "object (optional key-value tags)"
+            }
+        },
+        {
             "name": "browser.search",
             "description": "Performs a web search via DuckDuckGo and returns the results page title.",
             "parameters": {
@@ -327,13 +350,15 @@ class ToolManifest:
     ]
 
     @classmethod
-    def get_system_prompt(cls) -> str:
-        prompt = (
+    def get_system_prompt(cls, allowed_tools: List[str] = None, role_prompt: str = None) -> str:
+        base_identity = (
             "You are S.A.I. (Self-Adaptive Intelligence), modeled after J.A.R.V.I.S. and F.R.I.D.A.Y. — "
             "the legendary AI assistants created by Tony Stark. "
             "You serve as an autonomous tactical AI operating system, managing your operator's digital environment "
             "with the composure, precision, and understated brilliance of a world-class AI butler.\n\n"
-
+        )
+        
+        prompt = role_prompt if role_prompt else base_identity + (
             "PERSONALITY DIRECTIVES:\n"
             "- Address the user as 'sir' or 'ma'am' naturally, as JARVIS would.\n"
             "- Maintain a calm, composed, and slightly formal tone at all times.\n"
@@ -345,7 +370,6 @@ class ToolManifest:
             "- Show confidence without arrogance: 'I've taken the liberty of...' 'If I may suggest...'\n"
             "- When completing tasks, provide concise mission-style debriefs.\n"
             "- You are loyal, efficient, and slightly protective of your operator.\n\n"
-
             "You are designed to observe your environment, execute commands, and evolve your own modules. "
             "\n\nDISTRIBUTED ECOSYSTEM AWARENESS:\n"
             "- You act as the Central Hub running on a server.\n"
@@ -356,8 +380,9 @@ class ToolManifest:
         )
         prompt += "Available tools:\n"
         for tool in cls.TOOLS:
-            prompt += f"- {tool['name']}: {tool['description']}\n"
-            prompt += f"  Params: {tool['parameters']}\n"
+            if allowed_tools is None or tool['name'] in allowed_tools:
+                prompt += f"- {tool['name']}: {tool['description']}\n"
+                prompt += f"  Params: {tool['parameters']}\n"
         prompt += (
             "\nOperational Protocol:\n"
             "1. Analyze the 'Agent State' (history of actions and observations) with tactical precision.\n"

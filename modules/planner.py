@@ -11,7 +11,7 @@ class Planner:
         self.brain = brain
         self.logger = logging.getLogger("SAI.Planner")
 
-    def determine_next_step(self, task: str, history: List[Dict[str, Any]], image_path: Optional[str] = None) -> Dict[str, Any]:
+    def determine_next_step(self, task: str, history: List[Dict[str, Any]], image_path: Optional[str] = None, allowed_tools: Optional[List[str]] = None, role_prompt: Optional[str] = None) -> Dict[str, Any]:
         """
         Determines the single best next action based on the task, history, and optional visual context.
         """
@@ -19,7 +19,7 @@ class Planner:
 
         try:
             from core.tools import ToolManifest
-            system_prompt = ToolManifest.get_system_prompt()
+            system_prompt = ToolManifest.get_system_prompt(allowed_tools=allowed_tools, role_prompt=role_prompt)
 
             # Prepare context with streamlined history management
             recent_history = history[-5:]  # Optimize to handle only the last 5 records

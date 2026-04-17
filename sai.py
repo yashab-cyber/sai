@@ -33,6 +33,7 @@ from web.gui_server import GUIManager
 from core.tools import ToolManifest
 from core.reflection import ReflectionEngine
 from core.self_adaptation import SelfAdaptationEngine
+from core.swarm import SwarmOrchestrator
 
 # Import Modules
 from modules.planner import Planner
@@ -98,6 +99,7 @@ class SAI:
         self.reflection = ReflectionEngine(self.brain, self.evolution)
         self.adaptation = SelfAdaptationEngine(self)
         self.intelligence = IntelligenceEngine(self)
+        self.swarm = SwarmOrchestrator(self)
         self.is_running = False
         self._last_good_frames: Dict[str, str] = {}  # Cache for last-known-good device frames
 
@@ -633,6 +635,22 @@ class SAI:
                 )
             elif tool_name == "intelligence.stop":
                 return self.intelligence.stop_dashboard()
+
+            # Vector RAG Operations
+            elif tool_name == "memory.search_context":
+                embedding = self.brain.get_embedding(params['query'])
+                results = self.memory.search_semantic_memory(embedding, limit=int(params.get('limit', 5)))
+                return {"status": "success", "results": results}
+                
+            elif tool_name == "memory.memorize":
+                embedding = self.brain.get_embedding(params['content'])
+                self.memory.save_semantic_memory(params['content'], embedding, params.get('metadata'))
+                return {"status": "success", "message": "Context stored semantically."}
+                
+            # Swarm Orchestration
+            elif tool_name == "swarm.delegate":
+                result = await self.swarm.delegate(params['task'])
+                return {"status": "success", "swarm_debrief": result}
 
             elif tool_name == "system.ask":
                 print(f"\n[SAI PROMPT] {params['prompt']}")
