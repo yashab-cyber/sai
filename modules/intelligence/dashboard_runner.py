@@ -50,6 +50,21 @@ class DashboardRunner:
         if self.is_running:
             self.stop()
 
+        # Clean up stray detached instances holding our port
+        if self._health_check():
+            logger.info("Cleaning up stray dashboard process on port %d...", self.port)
+            try:
+                subprocess.run(["fuser", "-k", f"{self.port}/tcp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+            time.sleep(1.5)
+            if self._health_check():
+                try:
+                    subprocess.run(["pkill", "-f", "streamlit"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    pass
+                time.sleep(1)
+
         try:
             cmd = [
                 "streamlit", "run", script_path,
