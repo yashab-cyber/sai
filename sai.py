@@ -651,6 +651,29 @@ class SAI:
             elif tool_name == "swarm.delegate":
                 result = await self.swarm.delegate(params['task'])
                 return {"status": "success", "swarm_debrief": result}
+                
+            # Headless Browser Automation (Playwright)
+            elif tool_name == "browser.search":
+                return await self.browser.search(params['query'])
+            elif tool_name == "browser.navigate":
+                return await self.browser.navigate(params['url'])
+            elif tool_name == "browser.explore":
+                return await self.browser.get_interactive_elements()
+            elif tool_name == "browser.scrape":
+                return await self.browser.scrape_page_text()
+            elif tool_name == "browser.wait":
+                return await self.browser.wait_for(params['selector'], params.get('state', 'visible'))
+            elif tool_name == "browser.interact":
+                action = params.get('action')
+                selector = params.get('selector', '')
+                if action == 'click':
+                    return await self.browser.click(selector)
+                elif action == 'type':
+                    return await self.browser.type_text(selector, params.get('text', ''))
+                elif action == 'press':
+                    return await self.browser.press_key(selector, params.get('key', ''))
+                else:
+                    return {"status": "error", "message": f"Unknown interact action: {action}"}
 
             elif tool_name == "system.ask":
                 print(f"\n[SAI PROMPT] {params['prompt']}")
