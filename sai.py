@@ -31,6 +31,7 @@ from web.dashboard import DashboardManager
 from modules.browser import BrowserManager
 from web.gui_server import GUIManager
 from core.tools import ToolManifest
+from core.event_bus import EventBus
 from core.reflection import ReflectionEngine
 from core.self_adaptation import SelfAdaptationEngine
 from core.swarm import SwarmOrchestrator
@@ -48,6 +49,7 @@ from modules.vision_intelligence import VisionIntelligence
 from modules.plan_executor import PlanExecutor
 from modules.intelligence.engine import IntelligenceEngine
 from modules.tdd import TDDRunner
+from modules.rnd_lab.rnab_manager import RnDLabManager
 
 class SAI:
     """
@@ -64,6 +66,8 @@ class SAI:
         self.executor = Executor(self.safety)
         self.memory = MemoryManager(self.config['memory']['db_path'])
         self.brain = Brain()
+        self.event_bus = EventBus()
+        self.event_bus.start()
         
         # Initialize Modules
         self.device_manager = DeviceManager()
@@ -102,6 +106,7 @@ class SAI:
         self.adaptation = SelfAdaptationEngine(self)
         self.intelligence = IntelligenceEngine(self)
         self.swarm = SwarmOrchestrator(self)
+        self.rnd_lab = RnDLabManager(ai_provider=self.brain)
         self.is_running = False
         self._last_good_frames: Dict[str, str] = {}  # Cache for last-known-good device frames
 
@@ -154,12 +159,41 @@ class SAI:
             self.logger.warning("Another process is currently running, sir.")
             return
             
+        if task.startswith("run_rnd_task:"):
+            print(f"\\n[S.A.I.] Initiating Autonomous R&D Lab for: {task}")
+            intent = task.split("run_rnd_task:", 1)[1].strip()
+            result = self.rnd_lab.run_rnd_task(intent)
+            print(f"\\n[S.A.I.] R&D Lab Completed. Result: {result}")
+            return result
+            
         self.is_running = True
         print(f"\n[S.A.I.] Very good, sir. Initializing directive: {task}")
+        self.event_bus.publish("task_started", {"task": task, "max_iterations": max_iterations})
+        
         history = []
         _success_count = 0            # track successful actions for completion validation
         self.adaptation.reset_state()
         
+        # [PHASE 3: RAG] Fetch Semantic Memory context for the task
+        print(f"  [Cognition] Retrieving semantic memories for task...")
+        # Get external embedding (returns [] if offline/no key)
+        task_embedding = self.brain.get_embedding(task) 
+        
+        # We pass BOTH the external embedding and the raw task text.
+        # If task_embedding fails, ChromaDB's local model will handle it.
+        semantic_memories = self.memory.search_semantic_memory(
+            query_embedding=task_embedding, 
+            limit=3, 
+            threshold=0.5,
+            query_text=task
+        )
+        
+        if semantic_memories:
+            print(f"  [Cognition] Found {len(semantic_memories)} relevant past memories.")
+            rag_context = "\n".join([f"- Memory {m['id']}: {m['content']} (Relevance: {m['similarity']:.2f})" for m in semantic_memories])
+        else:
+            rag_context = "No highly relevant semantic memories found."
+            
         try:
             for i in range(max_iterations):
                 print(f"  [Processing] Tactical iteration {i+1}, sir...")
@@ -172,7 +206,7 @@ class SAI:
                     self.gui.update(screenshot=screenshot_path)
                 
                 # 1. Determine next best step
-                response = self.planner.determine_next_step(task, history, image_path=screenshot_path)
+                response = self.planner.determine_next_step(task, history, image_path=screenshot_path, extra_context=rag_context)
                 
                 thought = response.get("thought", "Thinking...")
                 tool_name = response.get("tool")
@@ -252,6 +286,14 @@ class SAI:
                     "status": status
                 })
                 
+                self.event_bus.publish("action_executed", {
+                    "task": task,
+                    "tool": tool_name,
+                    "params": params,
+                    "observation": observation,
+                    "status": status
+                })
+                
                 # Settle time: help prevent rapid-fire interaction issues on slow sites
                 await asyncio.sleep(1)
 
@@ -259,6 +301,7 @@ class SAI:
             self.reflection.reflect_on_task(task, history)
             self.gui.update(status="online")
             print("✅ Mission complete, sir. All systems nominal.")
+            self.event_bus.publish("task_completed", {"task": task, "history": history})
         finally:
             self.is_running = False
             self.logger.info("Cleaning up tactical logs...")

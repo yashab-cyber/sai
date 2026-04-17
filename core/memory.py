@@ -30,10 +30,23 @@ class MemoryManager:
             raise ValueError(f"Invalid SQL {kind}: '{name}'. Allowed: {valid_set}")
         return name
 
-    def __init__(self, db_path: str = "logs/sai_memory.db"):
+    def __init__(self, db_path: str = "logs/sai_memory.db", chroma_path: str = "logs/chroma_db"):
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.db_path = db_path
         self._init_db()
+        
+        # Initialize Vector DB (ChromaDB) for RAG support
+        try:
+            import chromadb
+            os.makedirs(chroma_path, exist_ok=True)
+            self.chroma_client = chromadb.PersistentClient(path=chroma_path)
+            self.chroma_collection = self.chroma_client.get_or_create_collection(
+                name="semantic_memory",
+                metadata={"hnsw:space": "cosine"}
+            )
+        except ImportError:
+            self.chroma_client = None
+            self.chroma_collection = None
 
     def _init_db(self):
         with sqlite3.connect(self.db_path) as conn:
@@ -273,7 +286,35 @@ class MemoryManager:
 
     # ── VECTORS (Native RAG) ──
     def save_semantic_memory(self, content: str, embedding: List[float], metadata: Optional[Dict[str, Any]] = None):
-        """Serializes and saves a vector to SQLite."""
+        """Serializes and saves a vector to ChromaDB and SQLite fallback."""
+        import uuid
+        
+        # We need a proper embedding for SQLite fallback. 
+        # If the brain provider failed, we can rely entirely on ChromaDB's default embedding function
+        # by passing None.
+        has_embedding = bool(embedding and len(embedding) > 0)
+        
+        # Primary: Save to ChromaDB
+        if self.chroma_collection is not None:
+            doc_id = str(uuid.uuid4())
+            safe_metadata = metadata or {"source": "manual"}
+            if not safe_metadata: 
+                safe_metadata = {"source": "manual"}
+            # Ensure metadata values are str, int, float, or bool for ChromaDB
+            safe_metadata = {k: str(v) if not isinstance(v, (str, int, float, bool)) else v for k, v in safe_metadata.items()}
+            
+            # If we don't pass embeddings, ChromaDB will automatically embed `content` locally via SentenceTransformers!
+            self.chroma_collection.add(
+                ids=[doc_id],
+                embeddings=[embedding] if has_embedding else None,
+                documents=[content],
+                metadatas=[safe_metadata]
+            )
+
+        if not has_embedding:
+            return  # Skip SQLite fallback if we don't have a numeric embedding.
+
+        # Fallback/Audit: Save to SQLite
         import numpy as np
         vector = np.array(embedding, dtype=np.float32)
         blob = vector.tobytes()
@@ -286,11 +327,46 @@ class MemoryManager:
             )
             conn.commit()
 
-    def search_semantic_memory(self, query_embedding: List[float], limit: int = 5, threshold: float = 0.5) -> List[Dict[str, Any]]:
-        """Calculates fast dot-product cosine similarity over all semantic records."""
+    def search_semantic_memory(self, query_embedding: List[float], limit: int = 5, threshold: float = 0.5, query_text: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Calculates fast dot-product cosine similarity over all semantic records via ChromaDB or local Numpy."""
         import numpy as np
         
-        # Query vector preparation
+        results = []
+        has_embedding = bool(query_embedding and len(query_embedding) > 0)
+        
+        # Attempt ChromaDB query first
+        if self.chroma_collection is not None:
+            if has_embedding:
+                chroma_results = self.chroma_collection.query(
+                    query_embeddings=[query_embedding],
+                    n_results=limit
+                )
+            elif query_text:
+                chroma_results = self.chroma_collection.query(
+                    query_texts=[query_text],
+                    n_results=limit
+                )
+            else:
+                return []
+                
+            if chroma_results and chroma_results["documents"] and chroma_results["documents"][0]:
+                for i in range(len(chroma_results["documents"][0])):
+                    distance = chroma_results["distances"][0][i]
+                    # Cosine distance to similarity
+                    similarity = 1.0 - distance
+                    if similarity >= threshold:
+                        results.append({
+                            "id": chroma_results["ids"][0][i],
+                            "content": chroma_results["documents"][0][i],
+                            "metadata": chroma_results["metadatas"][0][i],
+                            "timestamp": "N/A", # Chroma doesn't natively expose timestamp by default unless placed in meta
+                            "similarity": float(similarity)
+                        })
+                # Sort and return
+                results.sort(key=lambda x: x["similarity"], reverse=True)
+                return results
+
+        # Fallback: SQLite Brute-Force Numpy Search
         q_vec = np.array(query_embedding, dtype=np.float32)
         q_norm = np.linalg.norm(q_vec)
         if q_norm == 0:

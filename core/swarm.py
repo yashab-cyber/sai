@@ -60,12 +60,25 @@ class SwarmAgent:
             # Short sleep to yield event loop during heavy concurrent tool execution
             await asyncio.sleep(0.5)
             
+        # Fire completion event onto the bus
+        self.sai.event_bus.publish("swarm_agent_finished", {
+            "subtask": subtask,
+            "agent": self.name,
+            "history": history
+        })
         return {"subtask": subtask, "agent": self.name, "history": history}
 
 class SwarmOrchestrator:
     def __init__(self, sai_instance):
         self.sai = sai_instance
         self.logger = logging.getLogger("SAI.SwarmOrchestrator")
+        # Subscribe to Event Bus to trace subtask completions automatically
+        self.sai.event_bus.subscribe("swarm_agent_finished", self._handle_agent_completion)
+        
+    async def _handle_agent_completion(self, payload: Dict[str, Any]):
+        """Callback to handle an agent completing its isolated subtask without blocking."""
+        agent_name = payload.get("agent")
+        self.logger.info(f"Captured ASYNC event: {agent_name} successfully finished its delegated swarm routine.")
         
     async def delegate(self, objective: str) -> str:
         self.logger.info(f"Orchestrator delegating objective: {objective}")

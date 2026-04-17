@@ -31,14 +31,12 @@ class SafetyManager:
         "pytesseract", "streamlit", "feedparser", "pytrends", "beautifulsoup4", "plotly", "lxml"
     ]
     
-    # Whitelist of allowed shell commands
+    # Whitelist of allowed shell commands strictly for host UI or generic operations
     ALLOWED_COMMANDS = [
         "ls", "cat", "echo", "pwd", "date", "grep", "find", "git",
-        "python", "python3", "pip", "pip3", "npm", "node",
         "mkdir", "rm", "cp", "mv", "touch", "chmod", "curl", "wget",
         "mousepad", "firefox", "chromium", "gnome-terminal", "code",
-        "wmctrl", "xdotool", "free", "df", "uptime", "pkill", "scrot", "sensors",
-        "pytest", "black", "flake8", "tsc", "eslint", "vite", "streamlit"
+        "wmctrl", "xdotool", "free", "df", "uptime", "scrot", "sensors"
     ]
 
     def __init__(self, base_dir: str):

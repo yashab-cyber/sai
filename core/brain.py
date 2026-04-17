@@ -191,8 +191,4 @@ class Brain:
                 
         except Exception as e:
             self.logger.error(f"Embedding generation failed: {str(e)}")
-            import random
-            import hashlib
-            seed = int(hashlib.md5(text.encode()).hexdigest(), 16)
-            random.seed(seed)
-            return [random.uniform(-1.0, 1.0) for _ in range(1536)]
+            return []

@@ -11,7 +11,7 @@ class Planner:
         self.brain = brain
         self.logger = logging.getLogger("SAI.Planner")
 
-    def determine_next_step(self, task: str, history: List[Dict[str, Any]], image_path: Optional[str] = None, allowed_tools: Optional[List[str]] = None, role_prompt: Optional[str] = None) -> Dict[str, Any]:
+    def determine_next_step(self, task: str, history: List[Dict[str, Any]], image_path: Optional[str] = None, allowed_tools: Optional[List[str]] = None, role_prompt: Optional[str] = None, extra_context: Optional[str] = None) -> Dict[str, Any]:
         """
         Determines the single best next action based on the task, history, and optional visual context.
         """
@@ -38,9 +38,12 @@ class Planner:
                     "This is the first iteration of a new task. IMPORTANT: Any visual evidence of completion on the screen (e.g. terminal output or open files) may be 'stale' from a previous session. YOU MUST take a concrete action to fulfill the task yourself in this new session. Do not mark as 'completed' yet.\n\n"
                 )
 
+            rag_injection = f"Long-Term Memory Data (RAG):\n{extra_context}\n\n" if extra_context else ""
+
             context = (
                 f"Task: {task}\n\n"
                 f"{session_state}"
+                f"{rag_injection}"
                 f"Agent History (Recent):\n{history_str}\n\n"
                 "Decision Requirements:\n"
                 "- Provide 'thought' (mention what you see in the screenshot if provided)\n"

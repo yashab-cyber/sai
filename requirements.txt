@@ -30,3 +30,8 @@ pytrends
 beautifulsoup4
 plotly
 lxml
+
+# R&D Lab
+docker
+chromadb
+
