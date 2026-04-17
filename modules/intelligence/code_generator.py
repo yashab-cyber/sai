@@ -19,7 +19,8 @@ DASHBOARD_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "workspace",
 class CodeGenerator:
     """Generates Streamlit dashboard scripts from InsightReports."""
 
-    def __init__(self, output_dir: str = DASHBOARD_DIR):
+    def __init__(self, coder=None, output_dir: str = DASHBOARD_DIR):
+        self.coder = coder
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
 
@@ -40,8 +41,11 @@ class CodeGenerator:
 
         code = self._build_dashboard_code(report)
 
-        with open(filepath, "w") as f:
-            f.write(code)
+        if self.coder:
+            self.coder.write_module(filepath, code)
+        else:
+            with open(filepath, "w") as f:
+                f.write(code)
 
         logger.info("Dashboard generated: %s", filepath)
         return os.path.abspath(filepath)

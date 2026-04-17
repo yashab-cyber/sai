@@ -32,6 +32,7 @@ from modules.browser import BrowserManager
 from web.gui_server import GUIManager
 from core.tools import ToolManifest
 from core.reflection import ReflectionEngine
+from core.self_adaptation import SelfAdaptationEngine
 
 # Import Modules
 from modules.planner import Planner
@@ -95,6 +96,7 @@ class SAI:
         self.system = SystemManager(self.executor)
         self.hud_window = HUDWindow()
         self.reflection = ReflectionEngine(self.brain, self.evolution)
+        self.adaptation = SelfAdaptationEngine(self)
         self.intelligence = IntelligenceEngine(self)
         self.is_running = False
         self._last_good_frames: Dict[str, str] = {}  # Cache for last-known-good device frames
@@ -151,10 +153,8 @@ class SAI:
         self.is_running = True
         print(f"\n[S.A.I.] Very good, sir. Initializing directive: {task}")
         history = []
-        _consecutive_fails = 0
-        _device_failures = 0          # track consecutive device-unreachable errors
         _success_count = 0            # track successful actions for completion validation
-        _last_action_key = None
+        self.adaptation.reset_state()
         
         try:
             for i in range(max_iterations):
@@ -205,23 +205,6 @@ class SAI:
                     print("⚠️ No further action required at this time, sir.")
                     break
 
-                # ── Stuck-Loop Detection ──
-                action_key = f"{tool_name}:{sorted(params.items()) if isinstance(params, dict) else params}"
-                if action_key == _last_action_key:
-                    _consecutive_fails += 1
-                else:
-                    _consecutive_fails = 0
-                _last_action_key = action_key
-                
-                if _consecutive_fails >= 2:
-                    print("⚠️  Sir, I appear to be caught in a loop — repeating the same action without progress.")
-                    print("    I'd recommend we reassess the approach. Breaking tactical loop.")
-                    self.gui.update(
-                        thought="I've detected a tactical loop, sir. The same action has failed consecutively. Awaiting new directive.",
-                        action="LOOP_BREAK"
-                    )
-                    break
-
                 # 2. Execute Action
                 print(f"  > Executing: {tool_name}...")
                 action_result = await self.execute_tool(tool_name, params)
@@ -229,52 +212,15 @@ class SAI:
                 # 3. Observe
                 observation = str(action_result)
                 
-                # ── Device-Failure Fast-Break ──
-                # Catches ALL indicators that the Android device can't be reached:
-                # 1. "queued" = device is offline, command was NOT executed
-                # 2. "failed"/"error" with device-related error codes
-                # 3. Vision parse failures = device screenshot unavailable
-                _is_device_failure = False
-                if isinstance(action_result, dict):
-                    result_status = action_result.get("status", "")
-                    result_error = action_result.get("error", "")
-                    result_msg = action_result.get("message", "")
-
-                    # Queued = device offline, command never executed
-                    if result_status == "queued":
-                        _is_device_failure = True
-
-                    # Explicit device-related error codes
-                    elif result_status in ("failed", "error") and result_error in (
-                        "DEVICE_UNREACHABLE", "DEVICE_UNHEALTHY",
-                        "COMMAND_TIMEOUT", "NO_COMM_LAYER", "DISPATCH_ERROR",
-                    ):
-                        _is_device_failure = True
-
-                    # Vision/screenshot failures indicating device unreachable
-                    elif result_status == "failed" and any(kw in result_msg.lower() for kw in (
-                        "no screenshot", "no screen text", "device", "companion",
-                        "direct http",  # Catch HTTP fallback failures
-                    )):
-                        _is_device_failure = True
-
-                if _is_device_failure:
-                    _device_failures += 1
-                    _fail_reason = action_result.get("error") or action_result.get("status", "unknown")
-                    self.logger.warning(
-                        "Device failure %d/2 detected (tool=%s, reason=%s)",
-                        _device_failures, tool_name, _fail_reason
+                # ── Self-Adaptation Engine (Monitor & Analyze) ──
+                adaptation_plan = self.adaptation.monitor_action(tool_name, params, action_result)
+                if adaptation_plan["strategy"] != "CONTINUE":
+                    print(f"⚠️  {adaptation_plan.get('message', 'Stopping execution due to adaptation strategy.')}")
+                    self.gui.update(
+                        thought=adaptation_plan.get("thought", "Applying adaptation strategy..."),
+                        action=adaptation_plan["strategy"]
                     )
-                    if _device_failures >= 2:
-                        print("⚠️  Sir, the target device appears to be unreachable.")
-                        print("    Please verify the companion app is running and connected to the same network.")
-                        self.gui.update(
-                            thought="The target device is unreachable, sir. Two consecutive attempts have failed. Please check the companion app.",
-                            action="DEVICE_UNREACHABLE"
-                        )
-                        break
-                else:
-                    _device_failures = 0
+                    break
 
                 # Track successful actions for completion validation
                 if isinstance(action_result, dict) and action_result.get("status") == "success":
@@ -426,6 +372,10 @@ class SAI:
             # Coder Operations
             elif tool_name == "coder.write":
                 return self.coder.write_module(params['path'], params['code'])
+            elif tool_name == "coder.insert":
+                return self.coder.insert_function(params['path'], params['code'], params.get('target_class'))
+            elif tool_name == "coder.structure":
+                return self.coder.analyze_structure(params['path'])
             elif tool_name == "coder.replace_string":
                 return self.coder.replace_string(params['path'], params['old_string'], params['new_string'])
             elif tool_name == "coder.replace_function":
@@ -668,6 +618,11 @@ class SAI:
                 return self.intelligence.analyze(
                     query=params['query'],
                     sources=params.get('sources'),
+                    narrate=params.get('narrate', True)
+                )
+            elif tool_name == "intelligence.deep_research":
+                return self.intelligence.deep_research(
+                    query=params['query'],
                     narrate=params.get('narrate', True)
                 )
             elif tool_name == "intelligence.collect":

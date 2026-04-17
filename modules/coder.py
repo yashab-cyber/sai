@@ -1,12 +1,35 @@
 import logging
 import ast
 import subprocess
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from core.executor import Executor
+
+class FunctionReplacer(ast.NodeTransformer):
+    """Safely locates and replaces an AST function or method node."""
+    def __init__(self, target_name: str, new_node: ast.AST):
+        self.target_name = target_name
+        self.new_node = new_node
+        self.found = False
+
+    def visit_FunctionDef(self, node):
+        if node.name == self.target_name:
+            self.found = True
+            return self.new_node
+        self.generic_visit(node)
+        return node
+
+    def visit_AsyncFunctionDef(self, node):
+        if node.name == self.target_name:
+            self.found = True
+            return self.new_node
+        self.generic_visit(node)
+        return node
+
 
 class Coder:
     """
-    Upgraded self-improvable module specialized in code generation, refactoring, formatting and analysis.
+    Advanced AST-powered module specialized in code generation, refactoring, 
+    blueprint analysis, and structural formatting.
     """
     
     def __init__(self, executor: Executor):
@@ -14,12 +37,15 @@ class Coder:
         self.logger = logging.getLogger("SAI.Coder")
 
     def write_module(self, path: str, code: str) -> Dict[str, Any]:
-        """Writes a new module to the workspace."""
+        """Writes a new module to the workspace and runs formatter."""
         self.logger.info(f"Writing module at {path}")
-        return self.executor.write_file(path, code)
+        result = self.executor.write_file(path, code)
+        if result["status"] == "success" and path.endswith(".py"):
+            self.format_code(path)
+        return result
 
     def replace_string(self, path: str, old_string: str, new_string: str) -> Dict[str, Any]:
-        """Precise AST-independent string replacement for any file type."""
+        """Precise exact string replacement."""
         read_result = self.executor.read_file(path)
         if read_result["status"] != "success":
             return read_result
@@ -29,69 +55,165 @@ class Coder:
             return {"status": "error", "message": f"Exact target string not found in {path}."}
         
         if content.count(old_string) > 1:
-            return {"status": "error", "message": f"Target string appears multiple times in {path}. Make it more specific."}
+            return {"status": "error", "message": f"Target string appears multiple times in {path}."}
 
         new_content = content.replace(old_string, new_string)
         
-        # If it's a python file, validate syntax softly
         if path.endswith(".py"):
             valid, err = self.validate_code(new_content)
             if not valid:
                 return {"status": "error", "message": f"Replacement caused Python syntax error: {err}"}
 
-        return self.executor.write_file(path, new_content)
+        result = self.executor.write_file(path, new_content)
+        if result["status"] == "success" and path.endswith(".py"):
+            self.format_code(path)
+        return result
 
     def replace_function(self, path: str, function_name: str, new_function_code: str) -> Dict[str, Any]:
-        """Replaces an existing function in a module with new code."""
-        # Using the original naive implementation, but encourage use of replace_string for precision
+        """Structurally replaces a function/method using AST parsing (Python 3.9+)."""
         read_result = self.executor.read_file(path)
         if read_result["status"] != "success":
             return read_result
             
-        current_content = read_result["content"]
-        lines = current_content.splitlines()
+        original_code = read_result["content"]
         
-        start_line = -1
-        end_line = -1
+        try:
+            # Parse the new function
+            new_tree = ast.parse(new_function_code)
+            new_node = None
+            for node in new_tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    new_node = node
+                    break
+            
+            if not new_node:
+                return {"status": "error", "message": "The provided code does not contain a valid function definition."}
+
+            if new_node.name != function_name:
+                self.logger.warning(f"New function name '{new_node.name}' does not match target '{function_name}'. Enforcing original name.")
+                new_node.name = function_name
+
+            # Parse the original file
+            original_tree = ast.parse(original_code)
+            
+            # Transformer injection
+            replacer = FunctionReplacer(function_name, new_node)
+            modified_tree = replacer.visit(original_tree)
+            ast.fix_missing_locations(modified_tree)
+
+            if not replacer.found:
+                return {"status": "error", "message": f"Function '{function_name}' not found in {path}."}
+
+            # Unparse and validate
+            unparsed_code = ast.unparse(modified_tree)
+            
+            valid, int_err = self.validate_module_integrity(original_code, unparsed_code)
+            if not valid:
+                return {"status": "error", "message": int_err}
+
+            result = self.executor.write_file(path, unparsed_code)
+            if result["status"] == "success":
+                self.format_code(path)
+            return result
+
+        except SyntaxError as e:
+            return {"status": "error", "message": f"Syntax Error: {str(e)}"}
+        except Exception as e:
+            return {"status": "error", "message": f"AST manipulation failed: {str(e)}"}
+
+    def insert_function(self, path: str, new_function_code: str, target_class: Optional[str] = None) -> Dict[str, Any]:
+        """Injects a new function into a file, optionally inside a specific class."""
+        read_result = self.executor.read_file(path)
+        if read_result["status"] != "success":
+            return read_result
+            
+        original_code = read_result["content"]
         
-        import re
-        func_pattern = re.compile(rf"^\s*(?:async\s+)?def\s+{function_name}\s*\(")
-        
-        for i, line in enumerate(lines):
-            if func_pattern.match(line):
-                start_line = i
-                indent = len(line) - len(line.lstrip())
-                for j in range(i + 1, len(lines)):
-                    stripped = lines[j].strip()
-                    if not stripped or stripped.startswith("#"):
-                        continue
-                    current_indent = len(lines[j]) - len(lines[j].lstrip())
-                    if current_indent <= indent:
-                        end_line = j
+        try:
+            new_tree = ast.parse(new_function_code)
+            new_nodes = [n for n in new_tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+            if not new_nodes:
+                return {"status": "error", "message": "Code does not contain a function definition."}
+
+            original_tree = ast.parse(original_code)
+            
+            if target_class:
+                class_found = False
+                for node in original_tree.body:
+                    if isinstance(node, ast.ClassDef) and node.name == target_class:
+                        node.body.extend(new_nodes)
+                        class_found = True
                         break
-                if end_line == -1:
-                    end_line = len(lines)
-                break
-        
-        if start_line == -1:
-            return {"status": "error", "message": f"Function {function_name} not found in {path}"}
+                if not class_found:
+                    return {"status": "error", "message": f"Class '{target_class}' not found."}
+            else:
+                original_tree.body.extend(new_nodes)
+                
+            ast.fix_missing_locations(original_tree)
+            unparsed_code = ast.unparse(original_tree)
             
-        new_lines = lines[:start_line] + [new_function_code] + lines[end_line:]
-        new_content = "\n".join(new_lines)
-        
-        valid, error = self.validate_code(new_content)
-        if not valid:
-            return {"status": "error", "message": f"Replace resulted in invalid syntax: {error}"}
+            result = self.executor.write_file(path, unparsed_code)
+            if result["status"] == "success":
+                self.format_code(path)
+            return result
             
-        return self.executor.write_file(path, new_content)
+        except Exception as e:
+            return {"status": "error", "message": f"AST injection failed: {str(e)}"}
+
+    def analyze_structure(self, path: str) -> Dict[str, Any]:
+        """Reads a python file and returns an organizational blueprint of its structure."""
+        read_result = self.executor.read_file(path)
+        if read_result["status"] != "success":
+            return read_result
+            
+        code = read_result["content"]
+        
+        try:
+            tree = ast.parse(code)
+            structure = {"classes": [], "functions": [], "imports": []}
+            
+            for node in tree.body:
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    if isinstance(node, ast.Import):
+                        structure["imports"].extend(n.name for n in node.names)
+                    else:
+                        module = node.module or ""
+                        structure["imports"].extend(f"{module}.{n.name}" for n in node.names)
+                        
+                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    structure["functions"].append({
+                        "name": node.name,
+                        "args": [arg.arg for arg in node.args.args],
+                        "docstring": ast.get_docstring(node)
+                    })
+                    
+                elif isinstance(node, ast.ClassDef):
+                    cls_struct = {
+                        "name": node.name,
+                        "docstring": ast.get_docstring(node),
+                        "methods": []
+                    }
+                    for sub in node.body:
+                        if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            cls_struct["methods"].append({
+                                "name": sub.name,
+                                "args": [arg.arg for arg in sub.args.args]
+                            })
+                    structure["classes"].append(cls_struct)
+                    
+            return {"status": "success", "structure": structure, "file": path}
+            
+        except Exception as e:
+            return {"status": "error", "message": f"AST parsing failed: {str(e)}"}
 
     def lint_code(self, path: str) -> Dict[str, Any]:
         """Runs flake8 on a given file."""
         return self.executor.execute_shell(f"flake8 {path}")
 
     def format_code(self, path: str) -> Dict[str, Any]:
-        """Runs black on a given python file."""
-        return self.executor.execute_shell(f"black {path}")
+        """Runs black auto-formatter silently to preserve code hygiene."""
+        res = self.executor.execute_shell(f"black {path}")
+        return res
 
     def run_tests(self, path: str) -> Dict[str, Any]:
         """Runs pytest for a specific file or directory."""
@@ -106,6 +228,7 @@ class Coder:
             return False, str(e)
 
     def validate_module_integrity(self, original_code: str, new_code: str) -> tuple[bool, Optional[str]]:
+        """Ensures AST-unparsed output hasn't structurally corrupted critical files."""
         if not original_code.strip():
             return True, None
             

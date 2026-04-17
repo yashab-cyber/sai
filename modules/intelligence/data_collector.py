@@ -47,7 +47,7 @@ class DataCollector:
             max_items: Maximum items to return
         """
         if sources is None:
-            sources = ["rss", "news", "trends"]
+            sources = ["rss", "news", "trends", "arxiv", "pubmed", "wikipedia"]
 
         cache_key = hashlib.md5(f"{query}:{','.join(sources)}".encode()).hexdigest()
         if cache_key in self._cache and (time.time() - self._cache_ts.get(cache_key, 0)) < self.cache_ttl:
@@ -66,6 +66,12 @@ class DataCollector:
                     all_data.extend(self._collect_trends(query))
                 elif source == "scrape":
                     all_data.extend(self._collect_scrape(query, max_items=5))
+                elif source == "arxiv":
+                    all_data.extend(self._collect_arxiv(query, max_items=5))
+                elif source == "pubmed":
+                    all_data.extend(self._collect_pubmed(query, max_items=5))
+                elif source == "wikipedia":
+                    all_data.extend(self._collect_wikipedia(query))
             except Exception as e:
                 logger.warning("Data collection from %s failed: %s", source, e)
 
@@ -242,4 +248,92 @@ class DataCollector:
 
         except Exception as e:
             logger.warning("Web scraping failed: %s", e)
+            return []
+
+    # ── Academic APIs ──
+    def _collect_arxiv(self, query: str, max_items: int = 5) -> List[Dict[str, Any]]:
+        """Collects academic abstracts from ArXiv (STEM)."""
+        import requests
+        import xml.etree.ElementTree as ET
+
+        try:
+            url = f"http://export.arxiv.org/api/query?search_query=all:{query.replace(' ', '+')}&start=0&max_results={max_items}"
+            resp = requests.get(url, timeout=10)
+            root = ET.fromstring(resp.text)
+            ns = {'atom': 'http://www.w3.org/2005/Atom'}
+            
+            results = []
+            for entry in root.findall('atom:entry', ns):
+                title = entry.find('atom:title', ns).text.replace('\\n', ' ').strip()
+                summary = entry.find('atom:summary', ns).text.replace('\\n', ' ').strip()
+                link = entry.find('atom:id', ns).text
+                published = entry.find('atom:published', ns).text
+                
+                results.append({
+                    "source": "arxiv",
+                    "title": title,
+                    "text": summary[:1500],
+                    "url": link,
+                    "timestamp": published,
+                    "type": "academic_paper",
+                })
+            return results
+        except Exception as e:
+            logger.warning("ArXiv collection failed: %s", e)
+            return []
+
+    def _collect_pubmed(self, query: str, max_items: int = 5) -> List[Dict[str, Any]]:
+        """Collects medical/biology abstracts from PubMed."""
+        import requests
+        try:
+            search_url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term={query.replace(' ', '+')}&retmax={max_items}&retmode=json"
+            search_resp = requests.get(search_url, timeout=10).json()
+            id_list = search_resp.get("esearchresult", {}).get("idlist", [])
+            
+            if not id_list:
+                return []
+                
+            summary_url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id={','.join(id_list)}&retmode=json"
+            summary_resp = requests.get(summary_url, timeout=10).json()
+            
+            results = []
+            for uid in id_list:
+                item = summary_resp.get("result", {}).get(uid, {})
+                title = item.get("title", "")
+                pubdate = item.get("pubdate", "")
+                
+                results.append({
+                    "source": "pubmed",
+                    "title": title,
+                    "text": f"PubMed publication. Journal: {item.get('fulljournalname', '')}",
+                    "url": f"https://pubmed.ncbi.nlm.nih.gov/{uid}/",
+                    "timestamp": pubdate,
+                    "type": "academic_paper",
+                })
+            return results
+        except Exception as e:
+            logger.warning("PubMed collection failed: %s", e)
+            return []
+
+    def _collect_wikipedia(self, query: str) -> List[Dict[str, Any]]:
+        """Collects encyclopedia overview from Wikipedia."""
+        import requests
+        try:
+            url = f"https://en.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&exintro=1&explaintext=1&generator=search&gsrsearch={query.replace(' ', '+')}&gsrlimit=2"
+            resp = requests.get(url, timeout=10).json()
+            pages = resp.get("query", {}).get("pages", {})
+            
+            results = []
+            for page_id, page_data in pages.items():
+                results.append({
+                    "source": "wikipedia",
+                    "title": page_data.get("title", ""),
+                    "text": page_data.get("extract", "")[:1500],
+                    "url": f"https://en.wikipedia.org/?curid={page_id}",
+                    "timestamp": datetime.now().isoformat(),
+                    "type": "encyclopedia",
+                })
+            return results
+        except Exception as e:
+            logger.warning("Wikipedia collection failed: %s", e)
             return []

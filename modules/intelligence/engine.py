@@ -13,6 +13,8 @@ from modules.intelligence.insight_analyzer import InsightAnalyzer
 from modules.intelligence.code_generator import CodeGenerator
 from modules.intelligence.dashboard_runner import DashboardRunner
 from modules.intelligence.voice_explainer import VoiceExplainer
+from modules.intelligence.report_generator import ReportGenerator
+from modules.intelligence.voice_explainer import VoiceExplainer
 
 logger = logging.getLogger("SAI.Intelligence.Engine")
 
@@ -34,7 +36,8 @@ class IntelligenceEngine:
         self.sai = sai
         self.collector = DataCollector()
         self.analyzer = InsightAnalyzer(sai.brain)
-        self.generator = CodeGenerator()
+        self.generator = CodeGenerator(coder=sai.coder)
+        self.report_generator = ReportGenerator()
         self.runner = DashboardRunner()
         self.explainer = VoiceExplainer(sai.voice if hasattr(sai, 'voice') else None)
 
@@ -165,3 +168,57 @@ class IntelligenceEngine:
     def dashboard_status(self) -> Dict[str, Any]:
         """Returns the current dashboard status."""
         return self.runner.status()
+
+    def deep_research(self, query: str, narrate: bool = True) -> Dict[str, Any]:
+        """Orchestrates an intensive R&D deep dive using academic sources.
+
+        Args:
+            query: The research topic
+            narrate: Whether to voice-narrate the outcome
+
+        Returns:
+            Dict containing the status and the markdown report path.
+        """
+        logger.info("Initializing multi-disciplinary Deep Research on: %s", query)
+        
+        sources = ["arxiv", "pubmed", "wikipedia", "news", "scrape"]
+
+        logger.info("Step 1/3: Collecting academic and public data...")
+        try:
+            data_points = self.collector.collect(query, sources=sources, max_items=50)
+        except Exception as e:
+            logger.error("Deep search failed: %s", e)
+            return {"status": "failed", "error": str(e)}
+
+        if not data_points:
+            return {"status": "failed", "error": f"No data found for {query}"}
+
+        logger.info("Step 2/3: Synthesizing analytical report...")
+        try:
+            report = self.analyzer.analyze(data_points, query)
+        except Exception as e:
+            logger.error("Synthesis failed: %s", e)
+            return {"status": "failed", "error": str(e)}
+
+        logger.info("Step 3/3: Generating massive Markdown document...")
+        report_path = None
+        try:
+            report_path = self.report_generator.generate(report)
+        except Exception as e:
+            logger.error("Report generation failed: %s", e)
+
+        narration_text = None
+        if narrate:
+            try:
+                narration_text = self.explainer.narrate(report)
+            except Exception as e:
+                pass
+
+        return {
+            "status": "success",
+            "query": query,
+            "data_points_analyzed": len(data_points),
+            "report_path": report_path,
+            "narration": narration_text,
+            "message": f"Deep Research Synthesized. Total sources: {len(data_points)}. Report accessible at: {report_path}"
+        }
