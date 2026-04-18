@@ -26,7 +26,8 @@ class DependencyManager:
     STDLIB = {
         "os", "sys", "json", "time", "re", "math", "random", "logging", "typing",
         "ast", "shutil", "sqlite3", "subprocess", "threading", "datetime", "pathlib",
-        "base64", "hashlib", "argparse", "copy", "itertools", "collections", "uuid", "asyncio"
+        "base64", "hashlib", "argparse", "copy", "itertools", "collections", "uuid", "asyncio",
+        "imaplib", "smtplib", "email", "requests"
     }
 
     def __init__(self, workspace_dir: str):

@@ -50,6 +50,7 @@ from modules.plan_executor import PlanExecutor
 from modules.intelligence.engine import IntelligenceEngine
 from modules.tdd import TDDRunner
 from modules.rnd_lab.rnab_manager import RnDLabManager
+from modules.identity import IdentityManager
 
 class SAI:
     """
@@ -88,6 +89,7 @@ class SAI:
         self.vision_intelligence = VisionIntelligence()
         self.plan_executor = PlanExecutor(self)
         self.tdd = TDDRunner(self)
+        self.identity = IdentityManager()
 
 
         self.voice = VoiceManager(self)
@@ -446,6 +448,29 @@ class SAI:
                     allow_core=params.get('allow_core', False)
                 )
             
+            # Identity Operations
+            elif tool_name == "identity.email.read":
+                return self.identity.read_latest_emails(count=params.get("count", 5))
+            elif tool_name == "identity.email.send":
+                return self.identity.send_email(
+                    subject=params.get("subject", "Alert from S.A.I."),
+                    target_email=params.get("target_email"),
+                    body=params.get("body", "")
+                )
+            elif tool_name == "identity.github.publish":
+                return self.identity.github_publish(
+                    repo_url=params["repo_url"],
+                    branch=params.get("branch", "main"),
+                    commit_message=params.get("commit_message", "Autonomous commit by S.A.I."),
+                    path=params.get("path", ".")
+                )
+            elif tool_name == "identity.github.api":
+                return self.identity.github_api_request(
+                    method=params["method"],
+                    endpoint=params["endpoint"],
+                    data=params.get("data")
+                )
+
             # Shell
             elif tool_name == "executor.shell":
                 return self.executor.execute_shell(params['command'])

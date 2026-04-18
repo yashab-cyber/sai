@@ -354,6 +354,41 @@ class ToolManifest:
             "name": "browser.scrape",
             "description": "Extracts clean text content from the current page. Ideal for reading articles, papers, or result lists.",
             "parameters": {}
+        },
+        {
+            "name": "identity.email.read",
+            "description": "Reads the latest emails from S.A.I.'s Gmail inbox. Extremely useful for fetching OTP verification codes during account signups.",
+            "parameters": {
+                "count": "integer (number of recent emails to fetch, defaults to 5)"
+            }
+        },
+        {
+            "name": "identity.email.send",
+            "description": "Sends an email alert from S.A.I. to its human administrator.",
+            "parameters": {
+                "subject": "string",
+                "body": "string",
+                "target_email": "string (opt, defaults to YOUR_ADMIN_EMAIL)"
+            }
+        },
+        {
+            "name": "identity.github.publish",
+            "description": "Autonomously commits and pushes local workspace changes to a specified remote GitHub repository using S.A.I.'s personal token.",
+            "parameters": {
+                "repo_url": "string (the remote repository URL)",
+                "branch": "string (opt, defaults to main)",
+                "commit_message": "string (opt)",
+                "path": "string (opt, workspace dir)"
+            }
+        },
+        {
+            "name": "identity.github.api",
+            "description": "Performs direct GitHub REST API requests. Can be used to change its own bio/name (PATCH /user), create repos (POST /user/repos), update stars, read issues, etc. Does NOT support changing profile pictures directly.",
+            "parameters": {
+                "method": "string (GET, POST, PATCH, PUT, DELETE)",
+                "endpoint": "string (relative to https://api.github.com/, e.g., 'user' or 'user/repos')",
+                "data": "object/dict (JSON payload, optional)"
+            }
         }
     ]
 

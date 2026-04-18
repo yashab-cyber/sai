@@ -18,6 +18,15 @@ class EventBus:
         self._running = False
         self._worker_task = None
 
+    def _ensure_worker(self):
+        if self._running and self._worker_task is None:
+            try:
+                loop = asyncio.get_running_loop()
+                self._worker_task = loop.create_task(self._worker())
+                self.logger.info("EventBus worker initialized.")
+            except RuntimeError:
+                pass # Still no running event loop
+
     def subscribe(self, event_name: str, callback: Callable[[Dict[str, Any]], Awaitable[None]]):
         """Registers an asynchronous callback for a specific event."""
         if event_name not in self._subscribers:
@@ -27,6 +36,7 @@ class EventBus:
 
     def publish(self, event_name: str, payload: Dict[str, Any] = None):
         """Non-blocking publish. Puts the event into the queue."""
+        self._ensure_worker()
         if payload is None:
             payload = {}
         self._queue.put_nowait((event_name, payload))
@@ -58,8 +68,7 @@ class EventBus:
         """Starts the event bus background worker."""
         if not self._running:
             self._running = True
-            loop = asyncio.get_running_loop()
-            self._worker_task = loop.create_task(self._worker())
+            self._ensure_worker()
             self.logger.info("EventBus fully operational.")
 
     async def stop(self):
