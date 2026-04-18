@@ -153,6 +153,11 @@ class Brain:
         """Generates a high-dimensional vector representation of text for semantic memory."""
         try:
             if self.provider == "openai":
+                # Check for local copilot-api proxy to prevent 400 Bad Request on embeddings
+                if self.openai_base_url and ("localhost" in self.openai_base_url or "127.0.0.1" in self.openai_base_url):
+                    self.logger.debug("Local OpenAI proxy detected. Bypassing API embeddings to use ChromaDB native ONNX models.")
+                    return []
+                    
                 if not self.openai_key:
                     raise ValueError("OpenAI API key missing.")
                 import openai
