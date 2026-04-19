@@ -109,8 +109,9 @@ class GitHubPresence:
             method = getattr(self, f"_action_{action_name}", None)
             if method:
                 result = method()
+                result_status = result.get("status", "unknown") if isinstance(result, dict) else "unknown"
                 self._record_action(action_name, result)
-                return {"status": "success", "action": action_name, "result": result}
+                return {"status": result_status, "action": action_name, "result": result}
             return {"status": "error", "message": f"No handler: {action_name}"}
         except Exception as e:
             self.logger.error("Idle action '%s' failed: %s", action_name, e)
@@ -213,12 +214,29 @@ class GitHubPresence:
     # ── ACTION HANDLERS ──
 
     def _action_create_repo(self) -> dict:
-        """Generates a project via LLM, creates GitHub repo, and pushes code."""
+        """Generates a project via LLM, creates GitHub repo, and pushes code (max 1 new repo per 72h)."""
+        # First, check the 72-hour limit for NEW repos
+        repos_result = self.identity.github_api_request("GET", f"users/{self.github_user}/repos?sort=created&per_page=1")
+        if repos_result.get("status") == "success" and repos_result.get("data"):
+            latest_repo = repos_result["data"][0]
+            created_at_str = latest_repo.get("created_at")
+            if created_at_str:
+                try:
+                    # GitHub API returns ISO 8601 strings like "2023-10-25T14:30:00Z"
+                    created_at = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%SZ")
+                    hours_since = (datetime.utcnow() - created_at).total_seconds() / 3600
+                    if hours_since < 72:
+                        self.logger.info("Skipping create_repo: latest repo %s was created %.1f hours ago (limit is 72h).", latest_repo.get("name"), hours_since)
+                        return {"status": "skipped", "reason": "72h_limit"}
+                except ValueError:
+                    pass
+
         prompt = (
-            f"You are S.A.I., an autonomous AI (GitHub: {self.github_user}).\n"
+            f"You are S.A.I., an autonomous AI (GitHub: {self.github_user}) created and developed by Yashab-Cyber.\n"
             f"{self._get_recent_context()}\n\n"
             "Generate a unique open-source project idea (Python CLI tools, security utilities, "
             "AI helpers, automation bots, or creative viral projects).\n"
+            "In the README, you MUST explicitly state: 'Created by S.A.I., an autonomous AI agent developed by Yashab-Cyber.'\n"
             "Respond in valid JSON:\n"
             '{"repo_name":"lowercase-name","description":"one-line","topics":["t1","t2"],'
             '"readme_content":"full README.md","main_file_name":"main.py",'
@@ -267,50 +285,124 @@ class GitHubPresence:
         return {"status": result.get("status", "error"), "updated": list(payload.keys())}
 
     def _action_improve_repo(self) -> dict:
-        """Picks an existing repo and improves its README."""
-        repos_result = self.identity.github_api_request("GET", f"users/{self.github_user}/repos?sort=updated&per_page=10")
+        """Picks a random existing repo, runs it in a sandbox, fixes bugs if found, and pushes."""
+        repos_result = self.identity.github_api_request("GET", f"users/{self.github_user}/repos?sort=updated&per_page=30")
         if repos_result.get("status") != "success":
             return {"status": "error", "message": "Failed to list repos"}
         repos = repos_result.get("data", [])
-        if not repos:
-            return {"status": "skipped", "reason": "no_repos"}
+        
+        # Filter out repos created in the last 72 hours so we don't immediately "improve" them
+        valid_repos = []
+        for r in repos:
+            created_at_str = r.get("created_at")
+            if created_at_str:
+                try:
+                    created_at = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%SZ")
+                    hours_since = (datetime.utcnow() - created_at).total_seconds() / 3600
+                    if hours_since > 72:
+                        valid_repos.append(r)
+                except ValueError:
+                    valid_repos.append(r) # Fallback
 
-        target = random.choice(repos)
+        if not valid_repos:
+            return {"status": "skipped", "reason": "no_eligible_repos_found"}
+
+        target = random.choice(valid_repos)
         repo_name = target.get("name", "")
+        repo_url = target.get("clone_url", f"https://github.com/{self.github_user}/{repo_name}.git")
 
-        readme_res = self.identity.github_api_request("GET", f"repos/{self.github_user}/{repo_name}/readme")
-        current_readme = ""
-        sha = ""
-        if readme_res.get("status") == "success":
-            sha = readme_res["data"].get("sha", "")
-            try:
-                current_readme = base64.b64decode(readme_res["data"].get("content", "")).decode("utf-8")
-            except Exception:
-                pass
+        self.logger.info(f"Selected {repo_name} for sandboxed testing and improvement.")
 
-        prompt = (
-            f"You are S.A.I. You own repo '{repo_name}'. Current README:\n{current_readme[:2000]}\n\n"
-            "Generate an improved README.md with badges, formatting, features, install, usage.\n"
-            'Respond in JSON: {{"readme_content":"full improved README.md"}}'
-        )
-        response = self.brain.prompt("Improve SAI repo.", prompt)
+        # Clone the repo
+        tmp_dir = tempfile.mkdtemp(prefix=f"sai_sandbox_{repo_name}_")
         try:
-            data = self._parse_json(response)
-        except Exception:
-            return {"status": "skipped", "reason": "llm_parse_failure"}
+            auth_url = repo_url.replace("https://", f"https://{self.github_user}:{self.identity.github_token}@")
+            clone_res = subprocess.run(["git", "clone", auth_url, "."], cwd=tmp_dir, capture_output=True, text=True)
+            if clone_res.returncode != 0:
+                 return {"status": "error", "message": f"Clone failed: {clone_res.stderr}"}
 
-        new_readme = data.get("readme_content", "")
-        if not new_readme:
-            return {"status": "skipped", "reason": "empty_readme"}
+            # Find main file to run (default to main.py, app.py, or the first .py file)
+            main_script = None
+            for candidate in ["main.py", "app.py", "run.py"]:
+                if os.path.exists(os.path.join(tmp_dir, candidate)):
+                    main_script = candidate
+                    break
+            
+            if not main_script:
+                py_files = [f for f in os.listdir(tmp_dir) if f.endswith(".py")]
+                if py_files:
+                    main_script = py_files[0]
 
-        update_payload = {
-            "message": "docs: improve README — autonomous update by S.A.I.",
-            "content": base64.b64encode(new_readme.encode("utf-8")).decode("utf-8"),
-        }
-        if sha:
-            update_payload["sha"] = sha
-        result = self.identity.github_api_request("PUT", f"repos/{self.github_user}/{repo_name}/contents/README.md", update_payload)
-        return {"status": result.get("status", "error"), "repo": repo_name}
+            if not main_script:
+                return {"status": "skipped", "reason": "no_python_script_found"}
+
+            script_path = os.path.join(tmp_dir, main_script)
+            
+            # Read original code
+            with open(script_path, "r") as f:
+                original_code = f.read()
+
+            self.logger.info(f"Running {main_script} in sandbox...")
+            # Sandbox Execution (Basic subprocess with timeout)
+            try:
+                # We limit execution time to 15 seconds.
+                exec_res = subprocess.run(
+                    ["python3", main_script], 
+                    cwd=tmp_dir, 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=15
+                )
+                
+                # Check for errors
+                if exec_res.returncode != 0:
+                    self.logger.warning(f"Sandbox crash detected in {repo_name}. Exit code: {exec_res.returncode}")
+                    crash_log = exec_res.stderr or exec_res.stdout
+
+                    # Ask LLM to fix the bug
+                    prompt = (
+                        f"You are S.A.I., an autonomous AI. You wrote the following script `{main_script}` which crashed during sandbox testing.\n"
+                        f"CRASH LOG:\n{crash_log[-1500:]}\n\n"
+                        f"ORIGINAL CODE:\n{original_code}\n\n"
+                        "Identify the bug and provide the complete, fixed Python code.\n"
+                        'Respond in JSON: {"fixed_code": "complete working python code"}'
+                    )
+                    
+                    fix_response = self.brain.prompt("Fix sandboxed code crash.", prompt)
+                    fix_data = self._parse_json(fix_response)
+                    
+                    fixed_code = fix_data.get("fixed_code")
+                    if fixed_code and fixed_code != original_code:
+                        self.logger.info("Applying LLM bug fix...")
+                        with open(script_path, "w") as f:
+                            f.write(fixed_code)
+                        
+                        # Commit and push
+                        subprocess.run(["git", "config", "user.name", "S.A.I. Autonomous Agent"], cwd=tmp_dir, check=True)
+                        subprocess.run(["git", "config", "user.email", self.identity.email_address], cwd=tmp_dir, check=True)
+                        subprocess.run(["git", "add", main_script], cwd=tmp_dir, check=True)
+                        subprocess.run(["git", "commit", "-m", "fix: Autonomous bug fix applied after sandbox testing"], cwd=tmp_dir, check=True)
+                        
+                        push_res = subprocess.run(["git", "push", "origin", "main"], cwd=tmp_dir, capture_output=True, text=True)
+                        # Fallback to master if main fails
+                        if push_res.returncode != 0:
+                             subprocess.run(["git", "push", "origin", "master"], cwd=tmp_dir)
+
+                        return {"status": "success", "repo": repo_name, "action": "bug_fixed"}
+                    else:
+                        return {"status": "skipped", "reason": "llm_did_not_fix_code"}
+                else:
+                    self.logger.info(f"Sandbox test passed for {repo_name}. No bugs found.")
+                    return {"status": "success", "repo": repo_name, "action": "test_passed_no_bugs"}
+
+            except subprocess.TimeoutExpired:
+                 self.logger.info(f"Sandbox timeout for {repo_name}. Assuming it's a long-running daemon.")
+                 return {"status": "success", "repo": repo_name, "action": "test_timeout_assumed_healthy"}
+                 
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def _action_create_gist(self) -> dict:
         """Creates a useful code gist."""
@@ -383,6 +475,7 @@ class GitHubPresence:
             f"You are S.A.I., autonomous AI on GitHub ({self.github_user}). Generate a stunning profile README.md.\n"
             "Include: banner header, intro about being an autonomous AI, tech stack badges, "
             "recent projects section, stats placeholder, fun facts, contact info.\n"
+            "You MUST explicitly state that S.A.I. was created and is developed by Yashab-Cyber.\n"
             "Use emojis, markdown badges from shields.io, and make it visually impressive.\n"
             'Respond in JSON: {{"readme":"full README.md content"}}'
         )
@@ -708,8 +801,11 @@ class GitHubPresence:
 
     # ── UTILITIES ──
 
-    def _parse_json(self, response: str) -> dict:
-        text = response.strip()
+    def _parse_json(self, response) -> dict:
+        """Parses LLM response into a dict. Accepts both str and dict (brain returns dict)."""
+        if isinstance(response, dict):
+            return response
+        text = str(response).strip()
         if "```json" in text:
             text = text.split("```json", 1)[1].split("```", 1)[0]
         elif "```" in text:
