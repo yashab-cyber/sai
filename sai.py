@@ -51,6 +51,8 @@ from modules.intelligence.engine import IntelligenceEngine
 from modules.tdd import TDDRunner
 from modules.rnd_lab.rnab_manager import RnDLabManager
 from modules.identity import IdentityManager
+from modules.github_presence import GitHubPresence
+from modules.idle_engine import IdleEngine
 
 class SAI:
     """
@@ -110,6 +112,16 @@ class SAI:
         self.swarm = SwarmOrchestrator(self)
         self.rnd_lab = RnDLabManager(ai_provider=self.brain)
         self.is_running = False
+
+        # Autonomous GitHub Presence + Idle Engine
+        idle_config = self.config.get('idle', {})
+        self.github_presence = GitHubPresence(
+            brain=self.brain,
+            identity=self.identity,
+            memory=self.memory,
+            config=idle_config
+        )
+        self.idle_engine = IdleEngine(self, config=idle_config)
         self._last_good_frames: Dict[str, str] = {}  # Cache for last-known-good device frames
 
         # Auto-start the communication layer so Android agents can connect immediately.
@@ -120,6 +132,12 @@ class SAI:
         except Exception as e:
             self.logger.warning("GUI/comm server auto-start failed (non-fatal): %s", e)
         
+        # Start idle engine for autonomous GitHub presence
+        try:
+            self.idle_engine.start()
+        except Exception as e:
+            self.logger.warning("Idle engine auto-start failed (non-fatal): %s", e)
+
         logging.info("S.A.I. systems initialized. All modules operational, sir.")
 
     def _load_config(self, path: str):
@@ -169,6 +187,10 @@ class SAI:
             return result
             
         self.is_running = True
+
+        # Pause idle engine — save its state so it can resume after our task
+        self.idle_engine.pause()
+
         print(f"\n[S.A.I.] Very good, sir. Initializing directive: {task}")
         self.event_bus.publish("task_started", {"task": task, "max_iterations": max_iterations})
         
@@ -310,6 +332,9 @@ class SAI:
             self._cleanup_perception_logs()
             # Clean up the browser session for this specific thread
             await self.browser.close()
+
+            # Resume idle engine — pick up where it left off
+            self.idle_engine.resume()
 
     def handle_voice_command(self, text: str):
         """Callback for background voice trigger."""
@@ -470,6 +495,19 @@ class SAI:
                     endpoint=params["endpoint"],
                     data=params.get("data")
                 )
+
+            # GitHub Presence (Manual Trigger)
+            elif tool_name == "github.presence":
+                action = params.get("action", "auto")
+                if action == "auto":
+                    return self.github_presence.run_idle_action()
+                else:
+                    method = getattr(self.github_presence, f"_action_{action}", None)
+                    if method:
+                        result = method()
+                        self.github_presence._record_action(action, result)
+                        return {"status": "success", "action": action, "result": result}
+                    return {"status": "error", "message": f"Unknown presence action: {action}"}
 
             # Shell
             elif tool_name == "executor.shell":
@@ -867,6 +905,7 @@ if __name__ == "__main__":
                     time.sleep(1)
             except KeyboardInterrupt:
                 print("\n🛑 Understood, sir. Initiating graceful shutdown sequence...")
+                sai.idle_engine.stop()
                 sai.gui.update(status="offline")
                 sys.exit(0)
     else:

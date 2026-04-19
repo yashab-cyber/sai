@@ -2,6 +2,11 @@
 venv/
 .env
 
+# Databases
+*.db
+*.sqlite3
+logs/chroma_db/
+
 # Python
 __pycache__/
 *.pyc

@@ -5,7 +5,7 @@ system:
 
 safety:
   level: ${SAI_SAFETY_LEVEL:-STRICT}
-  base_dir: ${SAI_BASE_DIR:-/home/kali}
+  base_dir: ${SAI_BASE_DIR:-/home/kali/sai/}
   allow_self_modification: ${SAI_ALLOW_SELF_MOD:-true}
 
 brain:
@@ -21,3 +21,11 @@ browser:
   timeout: ${SAI_BROWSER_TIMEOUT:-30000}
   locale: ${SAI_BROWSER_LOCALE:-en-US}
   timezone: ${SAI_BROWSER_TIMEZONE:-UTC}
+
+# Idle Behavior — Autonomous GitHub Presence
+idle:
+  enabled: ${SAI_IDLE_ENABLED:-true}
+  min_cooldown_seconds: ${SAI_IDLE_MIN_COOLDOWN:-30}
+  max_cooldown_seconds: ${SAI_IDLE_MAX_COOLDOWN:-60}
+  startup_delay_seconds: ${SAI_IDLE_STARTUP_DELAY:-30}
+  max_daily_actions: ${SAI_IDLE_MAX_DAILY:-0}
