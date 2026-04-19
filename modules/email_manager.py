@@ -430,6 +430,101 @@ class EmailManager:
                 self.logger.error("Command poll error: %s", e)
             self._sleep_interruptible(self._cmd_poll_interval)
 
+    def process_pending_commands(self) -> dict:
+        """
+        Runs on startup — scans ALL unread emails for commands sent while SAI was offline.
+        Executes them oldest-first and notifies admin.
+        """
+        self.logger.info("Checking for pending commands sent while offline...")
+        
+        if not self.email_address or not self.email_password:
+            return {"status": "error", "message": "Email not configured"}
+
+        try:
+            mail = self._imap_connect()
+            mail.select("INBOX")
+            _, messages = mail.search(None, "UNSEEN")
+            
+            if not messages[0]:
+                mail.logout()
+                self.logger.info("No pending commands found.")
+                return {"status": "success", "pending": 0, "executed": []}
+
+            msg_ids = messages[0].split()  # All unread, oldest first
+            pending_commands = []
+
+            cmd_prefixes = ["CMD:", "SAI:", "EXECUTE:", "RUN:"]
+
+            for msg_id in msg_ids:
+                parsed = self._parse_email(mail, msg_id)
+                if not parsed:
+                    continue
+
+                subject = parsed.get("subject", "")
+                sender = parsed.get("from", "")
+                body = parsed.get("body", "")
+                uid = parsed.get("uid", "")
+
+                # Only from admin
+                if self.admin_email not in sender and self.email_address not in sender:
+                    continue
+
+                # Check for command prefix
+                command = None
+                for prefix in cmd_prefixes:
+                    if subject.upper().startswith(prefix):
+                        command = subject[len(prefix):].strip()
+                        break
+                    if body.strip().upper().startswith(prefix):
+                        command = body.strip()[len(prefix):].strip()
+                        break
+
+                if command:
+                    pending_commands.append({
+                        "command": command,
+                        "sender": sender,
+                        "uid": uid,
+                        "date": parsed.get("date", ""),
+                        "subject": subject
+                    })
+
+            mail.logout()
+
+            if not pending_commands:
+                self.logger.info("No pending commands found in unread emails.")
+                return {"status": "success", "pending": 0, "executed": []}
+
+            # Notify admin that SAI is back online with pending commands
+            self.logger.info("Found %d pending command(s) from while offline!", len(pending_commands))
+            self.send(
+                self.admin_email,
+                f"🤖 S.A.I. Back Online — {len(pending_commands)} Pending Command(s) Found",
+                f"Sir, I'm back online and found {len(pending_commands)} command(s) "
+                f"you sent while I was offline.\n\n"
+                f"Executing them now in order:\n" +
+                "\n".join(f"  {i+1}. {c['command']}" for i, c in enumerate(pending_commands)) +
+                "\n\nResults will follow in separate emails.\n\n— S.A.I."
+            )
+
+            # Execute each pending command (oldest first)
+            executed = []
+            for cmd_info in pending_commands:
+                command = cmd_info["command"]
+                sender = cmd_info["sender"]
+                uid = cmd_info["uid"]
+
+                self._processed_cmd_ids.add(uid)
+                self.logger.info("Executing pending command: %s (sent: %s)", command, cmd_info.get("date", "?"))
+                self._execute_email_command(command, sender)
+                executed.append(command)
+
+            self.logger.info("All %d pending commands executed.", len(executed))
+            return {"status": "success", "pending": len(pending_commands), "executed": executed}
+
+        except Exception as e:
+            self.logger.error("Pending command check failed: %s", e)
+            return {"status": "error", "message": str(e)}
+
     def _check_command_emails(self):
         """Checks for unread emails with command prefix from admin."""
         result = self.read_unread(count=5)

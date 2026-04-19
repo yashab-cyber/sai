@@ -151,6 +151,14 @@ class SAI:
                 if email_config.get('auto_start_reports', True):
                     self.email_mgr.start_status_reports()
                 if email_config.get('auto_start_commands', True):
+                    # First: process any commands sent while we were offline
+                    pending = self.email_mgr.process_pending_commands()
+                    if pending.get("pending", 0) > 0:
+                        self.logger.info(
+                            "Executed %d pending command(s) from while offline.",
+                            pending["pending"]
+                        )
+                    # Then: start the live polling loop
                     self.email_mgr.start_command_listener()
             except Exception as e:
                 self.logger.warning("Email system auto-start failed (non-fatal): %s", e)
