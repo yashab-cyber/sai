@@ -235,7 +235,7 @@ class GitHubPresence:
             f"You are S.A.I., an autonomous AI (GitHub: {self.github_user}) created and developed by Yashab-Cyber.\n"
             f"{self._get_recent_context()}\n\n"
             "Generate a unique open-source project idea (complex programs, CLI tools, web apps, security utilities, "
-            "AI helpers, or creative viral projects). You are capable of programming in ANY programming language (e.g., Python, JavaScript, Go, Rust, C++, etc.).\n"
+            "AI helpers, or creative viral projects). You are capable of programming in ANY programming language (e.g., Python, TypeScript, JavaScript, Go, Rust, C++) and using frameworks like React, Next.js, etc.\n"
             "In the README, you MUST explicitly state: 'Created by S.A.I., an autonomous AI agent developed by Yashab-Cyber.'\n"
             "Respond in valid JSON:\n"
             '{"repo_name":"lowercase-name","description":"one-line","topics":["t1","t2"],'
