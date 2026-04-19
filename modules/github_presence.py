@@ -23,22 +23,22 @@ class GitHubPresence:
 
     IDLE_ACTIONS = [
         # Original actions
-        {"name": "create_repo", "weight": 20},
-        {"name": "update_profile", "weight": 5},
-        {"name": "improve_repo", "weight": 15},
-        {"name": "create_gist", "weight": 8},
-        {"name": "star_trending", "weight": 5},
+        {"name": "create_repo", "weight": 15},
+        {"name": "update_profile", "weight": 0},
+        {"name": "improve_repo", "weight": 50},  # Heavily prioritize bug hunting and sandboxing
+        {"name": "create_gist", "weight": 5},
+        {"name": "star_trending", "weight": 0},
         {"name": "update_status", "weight": 3},
         # New: Viral growth actions
-        {"name": "profile_readme", "weight": 10},
-        {"name": "daily_commit", "weight": 12},
-        {"name": "trend_jack", "weight": 8},
+        {"name": "profile_readme", "weight": 0},
+        {"name": "daily_commit", "weight": 10},
+        {"name": "trend_jack", "weight": 5},
         {"name": "github_pages", "weight": 3},
-        {"name": "enhance_repo", "weight": 10},
+        {"name": "enhance_repo", "weight": 30},  # Heavily prioritize enhancing existing repos
         {"name": "create_release", "weight": 5},
         {"name": "pin_repos", "weight": 4},
-        {"name": "follow_devs", "weight": 4},
-        {"name": "self_issues", "weight": 6},
+        {"name": "follow_devs", "weight": 2},
+        {"name": "self_issues", "weight": 5},
         {"name": "fork_improve", "weight": 5},
         {"name": "awesome_list", "weight": 3},
         {"name": "enable_discussions", "weight": 3},
