@@ -29,3 +29,11 @@ idle:
   max_cooldown_seconds: ${SAI_IDLE_MAX_COOLDOWN:-60}
   startup_delay_seconds: ${SAI_IDLE_STARTUP_DELAY:-30}
   max_daily_actions: ${SAI_IDLE_MAX_DAILY:-0}
+
+# Email System — Full Gmail Control
+email:
+  enabled: ${SAI_EMAIL_ENABLED:-true}
+  report_interval_seconds: ${SAI_EMAIL_REPORT_INTERVAL:-300}
+  cmd_poll_interval_seconds: ${SAI_EMAIL_CMD_POLL:-30}
+  auto_start_reports: ${SAI_EMAIL_AUTO_REPORTS:-true}
+  auto_start_commands: ${SAI_EMAIL_AUTO_COMMANDS:-true}

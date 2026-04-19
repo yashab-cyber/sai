@@ -397,6 +397,64 @@ class ToolManifest:
             "parameters": {
                 "action": "string (optional: 'create_repo', 'update_profile', 'improve_repo', 'create_gist', 'star_trending', 'update_status', or 'auto' for random selection. Default: 'auto')"
             }
+        },
+        # ── Email Tools ──
+        {
+            "name": "email.send",
+            "description": "Sends an email from S.A.I.'s Gmail account. Supports HTML, attachments, CC, BCC.",
+            "parameters": {
+                "to": "string (recipient email)",
+                "subject": "string",
+                "body": "string (email body)",
+                "html": "boolean (optional, send as HTML)",
+                "cc": "string (optional, comma-separated)",
+                "bcc": "string (optional, comma-separated)"
+            }
+        },
+        {
+            "name": "email.read",
+            "description": "Reads the latest N emails from inbox or any folder.",
+            "parameters": {"count": "int (default 10)", "folder": "string (default INBOX)"}
+        },
+        {
+            "name": "email.read_unread",
+            "description": "Reads only unread/new emails.",
+            "parameters": {"count": "int (default 10)"}
+        },
+        {
+            "name": "email.search",
+            "description": "Searches emails by subject or sender.",
+            "parameters": {"query": "string", "folder": "string (optional)", "count": "int (optional)"}
+        },
+        {
+            "name": "email.reply",
+            "description": "Replies to a specific email by message UID.",
+            "parameters": {"msg_id": "string (UID)", "body": "string", "html": "boolean (optional)"}
+        },
+        {
+            "name": "email.delete",
+            "description": "Deletes an email by UID.",
+            "parameters": {"msg_id": "string (UID)"}
+        },
+        {
+            "name": "email.draft",
+            "description": "Saves an email as a draft in Gmail.",
+            "parameters": {"to": "string", "subject": "string", "body": "string"}
+        },
+        {
+            "name": "email.extract_otp",
+            "description": "Waits for an OTP/verification code email and extracts the code. Useful for website sign-ups.",
+            "parameters": {"wait": "int (seconds to wait, default 60)"}
+        },
+        {
+            "name": "email.folders",
+            "description": "Lists all Gmail folders/labels.",
+            "parameters": {}
+        },
+        {
+            "name": "email.google_signin",
+            "description": "Returns Google account credentials for Sign-in with Google flows on websites.",
+            "parameters": {}
         }
     ]
 

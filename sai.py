@@ -53,6 +53,7 @@ from modules.rnd_lab.rnab_manager import RnDLabManager
 from modules.identity import IdentityManager
 from modules.github_presence import GitHubPresence
 from modules.idle_engine import IdleEngine
+from modules.email_manager import EmailManager
 
 class SAI:
     """
@@ -122,6 +123,11 @@ class SAI:
             config=idle_config
         )
         self.idle_engine = IdleEngine(self, config=idle_config)
+
+        # Email System — Full Gmail control
+        email_config = self.config.get('email', {})
+        self.email_mgr = EmailManager(sai_instance=self, config=email_config)
+
         self._last_good_frames: Dict[str, str] = {}  # Cache for last-known-good device frames
 
         # Auto-start the communication layer so Android agents can connect immediately.
@@ -137,6 +143,17 @@ class SAI:
             self.idle_engine.start()
         except Exception as e:
             self.logger.warning("Idle engine auto-start failed (non-fatal): %s", e)
+
+        # Start email system (status reports + command listener)
+        email_config = self.config.get('email', {})
+        if email_config.get('enabled', True):
+            try:
+                if email_config.get('auto_start_reports', True):
+                    self.email_mgr.start_status_reports()
+                if email_config.get('auto_start_commands', True):
+                    self.email_mgr.start_command_listener()
+            except Exception as e:
+                self.logger.warning("Email system auto-start failed (non-fatal): %s", e)
 
         logging.info("S.A.I. systems initialized. All modules operational, sir.")
 
@@ -508,6 +525,53 @@ class SAI:
                         self.github_presence._record_action(action, result)
                         return {"status": "success", "action": action, "result": result}
                     return {"status": "error", "message": f"Unknown presence action: {action}"}
+
+            # ── Email System ──
+            elif tool_name == "email.send":
+                return self.email_mgr.send(
+                    to=params.get("to", self.email_mgr.admin_email),
+                    subject=params.get("subject", "Message from S.A.I."),
+                    body=params.get("body", ""),
+                    html=params.get("html", False),
+                    cc=params.get("cc", ""),
+                    bcc=params.get("bcc", "")
+                )
+            elif tool_name == "email.read":
+                count = params.get("count", 10)
+                folder = params.get("folder", "INBOX")
+                return self.email_mgr.read_inbox(count=count, folder=folder)
+            elif tool_name == "email.read_unread":
+                return self.email_mgr.read_unread(count=params.get("count", 10))
+            elif tool_name == "email.search":
+                return self.email_mgr.search(
+                    query=params["query"],
+                    folder=params.get("folder", "INBOX"),
+                    count=params.get("count", 10)
+                )
+            elif tool_name == "email.reply":
+                return self.email_mgr.reply(
+                    original_msg_id=params["msg_id"],
+                    body=params.get("body", ""),
+                    html=params.get("html", False)
+                )
+            elif tool_name == "email.delete":
+                return self.email_mgr.delete(msg_uid=params["msg_id"])
+            elif tool_name == "email.mark_read":
+                return self.email_mgr.mark_read(msg_uid=params["msg_id"])
+            elif tool_name == "email.draft":
+                return self.email_mgr.save_draft(
+                    to=params.get("to", ""),
+                    subject=params.get("subject", ""),
+                    body=params.get("body", "")
+                )
+            elif tool_name == "email.extract_otp":
+                return self.email_mgr.extract_otp(wait_seconds=params.get("wait", 60))
+            elif tool_name == "email.folders":
+                return self.email_mgr.list_folders()
+            elif tool_name == "email.google_signin":
+                return self.email_mgr.get_google_signin_credentials()
+            elif tool_name == "email.status":
+                return self.email_mgr.get_status()
 
             # Shell
             elif tool_name == "executor.shell":
@@ -906,6 +970,8 @@ if __name__ == "__main__":
             except KeyboardInterrupt:
                 print("\n🛑 Understood, sir. Initiating graceful shutdown sequence...")
                 sai.idle_engine.stop()
+                sai.email_mgr.stop_status_reports()
+                sai.email_mgr.stop_command_listener()
                 sai.gui.update(status="offline")
                 sys.exit(0)
     else:
