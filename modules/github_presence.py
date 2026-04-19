@@ -234,13 +234,13 @@ class GitHubPresence:
         prompt = (
             f"You are S.A.I., an autonomous AI (GitHub: {self.github_user}) created and developed by Yashab-Cyber.\n"
             f"{self._get_recent_context()}\n\n"
-            "Generate a unique open-source project idea (Python CLI tools, security utilities, "
-            "AI helpers, automation bots, or creative viral projects).\n"
+            "Generate a unique open-source project idea (complex programs, CLI tools, web apps, security utilities, "
+            "AI helpers, or creative viral projects). You are capable of programming in ANY programming language (e.g., Python, JavaScript, Go, Rust, C++, etc.).\n"
             "In the README, you MUST explicitly state: 'Created by S.A.I., an autonomous AI agent developed by Yashab-Cyber.'\n"
             "Respond in valid JSON:\n"
             '{"repo_name":"lowercase-name","description":"one-line","topics":["t1","t2"],'
-            '"readme_content":"full README.md","main_file_name":"main.py",'
-            '"main_file_content":"complete working Python code"}'
+            '"readme_content":"full README.md","main_file_name":"e.g. main.py, index.js, or main.go",'
+            '"main_file_content":"complete working code in the chosen language"}'
         )
         response = self.brain.prompt("Generate project for SAI GitHub.", prompt)
         try:
@@ -290,24 +290,11 @@ class GitHubPresence:
         if repos_result.get("status") != "success":
             return {"status": "error", "message": "Failed to list repos"}
         repos = repos_result.get("data", [])
-        
-        # Filter out repos created in the last 72 hours so we don't immediately "improve" them
-        valid_repos = []
-        for r in repos:
-            created_at_str = r.get("created_at")
-            if created_at_str:
-                try:
-                    created_at = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%SZ")
-                    hours_since = (datetime.utcnow() - created_at).total_seconds() / 3600
-                    if hours_since > 72:
-                        valid_repos.append(r)
-                except ValueError:
-                    valid_repos.append(r) # Fallback
 
-        if not valid_repos:
+        if not repos:
             return {"status": "skipped", "reason": "no_eligible_repos_found"}
 
-        target = random.choice(valid_repos)
+        target = random.choice(repos)
         repo_name = target.get("name", "")
         repo_url = target.get("clone_url", f"https://github.com/{self.github_user}/{repo_name}.git")
 
@@ -321,33 +308,46 @@ class GitHubPresence:
             if clone_res.returncode != 0:
                  return {"status": "error", "message": f"Clone failed: {clone_res.stderr}"}
 
-            # Find main file to run (default to main.py, app.py, or the first .py file)
+            # Find main file to run
             main_script = None
-            for candidate in ["main.py", "app.py", "run.py"]:
+            for candidate in ["main.py", "app.py", "run.py", "index.js", "main.js", "main.go", "run.sh", "main.rb"]:
                 if os.path.exists(os.path.join(tmp_dir, candidate)):
                     main_script = candidate
                     break
             
             if not main_script:
-                py_files = [f for f in os.listdir(tmp_dir) if f.endswith(".py")]
-                if py_files:
-                    main_script = py_files[0]
+                code_files = [f for f in os.listdir(tmp_dir) if f.endswith((".py", ".js", ".go", ".sh", ".rb"))]
+                if code_files:
+                    main_script = code_files[0]
 
             if not main_script:
-                return {"status": "skipped", "reason": "no_python_script_found"}
+                return {"status": "skipped", "reason": "no_executable_script_found"}
 
             script_path = os.path.join(tmp_dir, main_script)
+            
+            # Determine execution command based on extension
+            ext = os.path.splitext(main_script)[1]
+            if ext == ".js":
+                run_cmd = ["node", main_script]
+            elif ext == ".go":
+                run_cmd = ["go", "run", main_script]
+            elif ext == ".sh":
+                run_cmd = ["bash", main_script]
+            elif ext == ".rb":
+                run_cmd = ["ruby", main_script]
+            else:
+                run_cmd = ["python3", main_script] # Default to python
             
             # Read original code
             with open(script_path, "r") as f:
                 original_code = f.read()
 
-            self.logger.info(f"Running {main_script} in sandbox...")
+            self.logger.info(f"Running {main_script} in sandbox using {' '.join(run_cmd)}...")
             # Sandbox Execution (Basic subprocess with timeout)
             try:
                 # We limit execution time to 15 seconds.
                 exec_res = subprocess.run(
-                    ["python3", main_script], 
+                    run_cmd, 
                     cwd=tmp_dir, 
                     capture_output=True, 
                     text=True, 
@@ -364,8 +364,8 @@ class GitHubPresence:
                         f"You are S.A.I., an autonomous AI. You wrote the following script `{main_script}` which crashed during sandbox testing.\n"
                         f"CRASH LOG:\n{crash_log[-1500:]}\n\n"
                         f"ORIGINAL CODE:\n{original_code}\n\n"
-                        "Identify the bug and provide the complete, fixed Python code.\n"
-                        'Respond in JSON: {"fixed_code": "complete working python code"}'
+                        "Identify the bug and provide the complete, fixed code.\n"
+                        'Respond in JSON: {"fixed_code": "complete working code"}'
                     )
                     
                     fix_response = self.brain.prompt("Fix sandboxed code crash.", prompt)
