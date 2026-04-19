@@ -292,6 +292,7 @@ class GitHubPresence:
         repos = repos_result.get("data", [])
 
         if not repos:
+            self.logger.info("Skipping improve_repo: no eligible repos found.")
             return {"status": "skipped", "reason": "no_eligible_repos_found"}
 
         target = random.choice(repos)
@@ -321,6 +322,7 @@ class GitHubPresence:
                     main_script = code_files[0]
 
             if not main_script:
+                self.logger.info(f"Skipping {repo_name}: no executable script found in root.")
                 return {"status": "skipped", "reason": "no_executable_script_found"}
 
             script_path = os.path.join(tmp_dir, main_script)
@@ -346,12 +348,15 @@ class GitHubPresence:
             # Sandbox Execution (Basic subprocess with timeout)
             try:
                 # We limit execution time to 15 seconds.
+                # Use DEVNULL for stdin so interactive scripts (e.g. input()) instantly crash with EOFError 
+                # rather than hanging and triggering a false timeout success.
                 exec_res = subprocess.run(
                     run_cmd, 
                     cwd=tmp_dir, 
                     capture_output=True, 
                     text=True, 
-                    timeout=15
+                    timeout=15,
+                    stdin=subprocess.DEVNULL
                 )
                 
                 # Check for errors

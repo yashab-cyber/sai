@@ -208,9 +208,17 @@ class IdleEngine:
 
             action = result.get("action", "unknown")
             status = result.get("status", "unknown")
+            
+            # Extract additional context for logging
+            extra_msg = ""
+            if status == "skipped" and "reason" in result:
+                extra_msg = f" (Reason: {result['reason']})"
+            elif status == "error" and "message" in result:
+                extra_msg = f" (Error: {result['message']})"
+                
             self.logger.info(
-                "Idle action completed: %s [%s] (total: %d)",
-                action, status, self._actions_executed
+                "Idle action completed: %s [%s]%s (total: %d)",
+                action, status, extra_msg, self._actions_executed
             )
 
             # Publish event
