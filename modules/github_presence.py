@@ -408,80 +408,170 @@ class GitHubPresence:
             if clone_res.returncode != 0:
                 return {"status": "error", "message": f"Clone failed: {clone_res.stderr}"}
 
-            # ── Step 1: Catalog repo structure ──
+            # ── Step 1: Deep Repo Cognition — full file catalog ──
             repo_files = []
+            file_sizes = {}
             for root, dirs, files in os.walk(tmp_dir):
-                dirs[:] = [d for d in dirs if d not in (".git", "node_modules", "__pycache__", "venv", ".venv")]
+                dirs[:] = [d for d in dirs if d not in (
+                    ".git", "node_modules", "__pycache__", "venv", ".venv",
+                    "dist", "build", ".next", ".cache", "coverage", ".tox",
+                )]
                 for f in files:
                     rel = os.path.relpath(os.path.join(root, f), tmp_dir)
                     repo_files.append(rel)
+                    try:
+                        file_sizes[rel] = os.path.getsize(os.path.join(root, f))
+                    except OSError:
+                        file_sizes[rel] = 0
 
-            # Read key files for context (cap total to avoid token overflow)
+            # Categorize files by role
+            source_exts = {".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".rb",
+                           ".c", ".cpp", ".h", ".cs", ".kt", ".java", ".sh", ".sql"}
+            config_exts = {".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".env"}
+            doc_exts = {".md", ".txt", ".rst", ".adoc"}
+            web_exts = {".html", ".css", ".scss", ".less", ".svg"}
+
+            source_files = [f for f in repo_files if os.path.splitext(f)[1] in source_exts]
+            config_files = [f for f in repo_files if os.path.splitext(f)[1] in config_exts or f in (
+                "Makefile", "Dockerfile", "docker-compose.yml", "Procfile", ".gitignore",
+            )]
+            doc_files = [f for f in repo_files if os.path.splitext(f)[1] in doc_exts]
+            web_files = [f for f in repo_files if os.path.splitext(f)[1] in web_exts]
+
+            # Detect project type and dependencies
+            has_package_json = os.path.exists(os.path.join(tmp_dir, "package.json"))
+            has_requirements = os.path.exists(os.path.join(tmp_dir, "requirements.txt"))
+            has_go_mod = os.path.exists(os.path.join(tmp_dir, "go.mod"))
+            has_cargo = os.path.exists(os.path.join(tmp_dir, "Cargo.toml"))
+            has_docker = os.path.exists(os.path.join(tmp_dir, "Dockerfile"))
+            has_ci = any(f.startswith(".github/") for f in repo_files)
+            has_tests = any("test" in f.lower() for f in repo_files)
+            has_gui = bool(web_files) or any("gui" in f.lower() or "ui" in f.lower() for f in repo_files)
+
+            # Read ALL source + config + doc files (prioritized, capped at 15K chars)
+            priority_order = source_files + config_files + doc_files + web_files
             file_contents = {}
             total_chars = 0
-            for rel_path in repo_files[:20]:
+            max_chars = 15000
+            for rel_path in priority_order:
+                if total_chars >= max_chars:
+                    break
                 full_path = os.path.join(tmp_dir, rel_path)
+                if file_sizes.get(rel_path, 0) > 50000:  # Skip huge files
+                    continue
                 try:
                     with open(full_path, "r", errors="ignore") as fh:
                         content = fh.read()
-                        if total_chars + len(content) > 8000:
-                            content = content[:max(0, 8000 - total_chars)]
+                        remaining = max_chars - total_chars
+                        if len(content) > remaining:
+                            content = content[:remaining]
                         file_contents[rel_path] = content
                         total_chars += len(content)
-                        if total_chars >= 8000:
-                            break
                 except Exception:
                     pass
 
-            self.logger.info("Repo %s has %d files. Read %d for analysis.", repo_name, len(repo_files), len(file_contents))
+            self.logger.info(
+                "Repo %s: %d total files (%d source, %d config, %d docs, %d web). Read %d files (%d chars).",
+                repo_name, len(repo_files), len(source_files), len(config_files),
+                len(doc_files), len(web_files), len(file_contents), total_chars,
+            )
 
-            # ── Step 2: Research best practices ──
-            collector = DataCollector()
-            research_query = f"{repo_lang} project best practices features GUI testing 2024"
+            # ── Step 2: LLM Deep Understanding — analyze before acting ──
+            structure_summary = (
+                f"Source files ({len(source_files)}): {', '.join(source_files[:30])}\n"
+                f"Config files ({len(config_files)}): {', '.join(config_files[:15])}\n"
+                f"Doc files ({len(doc_files)}): {', '.join(doc_files[:10])}\n"
+                f"Web files ({len(web_files)}): {', '.join(web_files[:10])}\n"
+                f"Has package.json: {has_package_json} | Has requirements.txt: {has_requirements}\n"
+                f"Has go.mod: {has_go_mod} | Has Cargo.toml: {has_cargo}\n"
+                f"Has Dockerfile: {has_docker} | Has CI/CD: {has_ci}\n"
+                f"Has tests: {has_tests} | Has GUI/web: {has_gui}\n"
+            )
+            code_snippets = ""
+            for path, content in list(file_contents.items())[:8]:
+                code_snippets += f"\n--- {path} ---\n{content[:2000]}\n"
+
+            understand_prompt = (
+                f"You are S.A.I., an autonomous AI (GitHub: {self.github_user}).\n"
+                f"Deeply analyze this repository before making any changes.\n\n"
+                f"REPO: {repo_name}\n"
+                f"DESCRIPTION: {repo_desc}\n"
+                f"PRIMARY LANGUAGE: {repo_lang}\n\n"
+                f"STRUCTURE:\n{structure_summary}\n"
+                f"CODE:\n{code_snippets}\n\n"
+                "Provide a deep analysis:\n"
+                "1. What does this project DO? (purpose, functionality)\n"
+                "2. What architecture/patterns does it use?\n"
+                "3. What dependencies does it have?\n"
+                "4. What is MISSING that would add real value?\n"
+                "5. What specific improvements would make this professional-grade?\n\n"
+                'Respond in JSON: {"purpose": "what it does", "architecture": "patterns used", '
+                '"dependencies": ["dep1"], "missing": ["thing1", "thing2"], '
+                '"improvements": ["specific improvement 1", "specific improvement 2"], '
+                '"search_query": "best search query for researching improvements"}'
+            )
             try:
-                research_data = collector.collect(query=research_query, sources=["scrape", "rss"], max_items=10)
+                understand_resp = self.brain.prompt("Deep repo analysis before improvement.", understand_prompt)
+                repo_understanding = self._parse_json(understand_resp) if not isinstance(understand_resp, dict) else understand_resp
+                self.logger.info(
+                    "Repo understanding — Purpose: %s | Missing: %s",
+                    str(repo_understanding.get("purpose", ""))[:80],
+                    str(repo_understanding.get("missing", []))[:100],
+                )
+            except Exception:
+                repo_understanding = {"purpose": repo_desc, "missing": [], "improvements": []}
+
+            # ── Step 3: Research based on understanding ──
+            collector = DataCollector()
+            search_query = repo_understanding.get(
+                "search_query",
+                f"{repo_lang} {repo_name} project improvements best practices"
+            )
+            try:
+                research_data = collector.collect(query=search_query, sources=["scrape", "rss"], max_items=10)
                 research_summary = "\n".join(
                     f"- [{dp.get('source', '')}] {dp.get('title', '')[:80]}: {dp.get('text', '')[:150]}"
                     for dp in research_data[:8]
                 )
-                self.logger.info("Research: %d data points for %s improvements.", len(research_data), repo_name)
+                self.logger.info("Research: %d data points for %s.", len(research_data), repo_name)
             except Exception as e:
                 self.logger.warning("Research failed: %s", e)
                 research_summary = "No research data available."
 
-            # ── Step 3: LLM analyzes and generates new features ──
-            file_listing = "\n".join(f"  - {f}" for f in repo_files[:40])
-            code_snippets = ""
-            for path, content in list(file_contents.items())[:5]:
-                code_snippets += f"\n--- {path} ---\n{content[:1500]}\n"
+            # ── Step 4: Generate targeted improvements using full understanding ──
+            file_listing = "\n".join(f"  - {f}" for f in repo_files[:50])
 
             prompt = (
                 f"You are S.A.I., an autonomous AI agent (GitHub: {self.github_user}) "
                 f"created by Yashab-Cyber.\n\n"
                 f"REPOSITORY: {repo_name}\n"
                 f"DESCRIPTION: {repo_desc}\n"
-                f"LANGUAGE: {repo_lang}\n"
-                f"FILES:\n{file_listing}\n\n"
-                f"CODE SAMPLES:\n{code_snippets}\n\n"
+                f"LANGUAGE: {repo_lang}\n\n"
+                f"YOUR ANALYSIS OF THIS REPO:\n{json.dumps(repo_understanding, default=str)[:2000]}\n\n"
+                f"ALL FILES:\n{file_listing}\n\n"
                 f"RESEARCH:\n{research_summary}\n\n"
-                "Analyze this repository and ADD VALUABLE NEW FEATURES. You can:\n"
-                "- Add a web GUI (HTML/CSS/JS) or CLI interface\n"
-                "- Add unit tests (pytest, jest, etc.)\n"
-                "- Add documentation (README improvements, API docs, usage guides)\n"
-                "- Add configuration files (.env.example, docker-compose.yml, Makefile)\n"
-                "- Add new modules/functionality that extends the project\n"
-                "- Add GitHub Actions CI/CD workflows\n"
-                "- Add type hints, error handling, logging\n"
-                "- Add any file type: .py, .js, .ts, .html, .css, .json, .yaml, .md, .txt, .sql, .sh, etc.\n\n"
-                "DO NOT replace or delete existing files. Only ADD new files or IMPROVE existing ones.\n"
-                "Generate 2-5 new/improved files that add real value.\n\n"
+                "Based on your deep understanding of this repo, generate TARGETED improvements.\n"
+                "You have FULL CONTROL — you can add new files or modify existing ones.\n"
+                "Make improvements that are SPECIFIC to what this project actually does.\n\n"
+                "Examples of valuable additions:\n"
+                "- Web GUI (HTML/CSS/JS dashboard) if the project has no frontend\n"
+                "- Unit tests for existing functions\n"
+                "- CLI interface if there isn't one\n"
+                "- Better error handling and logging in existing code\n"
+                "- Docker/CI configuration\n"
+                "- API documentation or usage examples\n"
+                "- Performance optimizations\n"
+                "- Type hints, docstrings, better README\n"
+                "- Any file type: .py, .js, .ts, .html, .css, .go, .rs, .c, .cpp, .kt, "
+                ".java, .sql, .json, .yaml, .md, .txt, .sh, .dockerfile, etc.\n\n"
+                "Generate 2-6 files. For modified files, include the COMPLETE updated content.\n\n"
                 "Respond in JSON:\n"
-                '{"improvement_summary": "what you improved", '
+                '{"improvement_summary": "what you improved and WHY", '
                 '"files": [{"path": "relative/path", "content": "full content", "action": "new|modify"}], '
                 '"commit_message": "feat: descriptive commit message"}'
             )
 
-            response = self.brain.prompt("Improve existing repository with new features.", prompt)
+            response = self.brain.prompt("Targeted repo improvement with full understanding.", prompt)
             try:
                 improvement = self._parse_json(response)
             except Exception:
@@ -494,7 +584,7 @@ class GitHubPresence:
             if not new_files:
                 return {"status": "skipped", "reason": "no_improvements_generated"}
 
-            self.logger.info("Generated %d improvements for %s: %s", len(new_files), repo_name, summary[:100])
+            self.logger.info("Generated %d targeted improvements for %s: %s", len(new_files), repo_name, summary[:100])
 
             # ── Step 4: Apply changes ──
             for f_obj in new_files:
