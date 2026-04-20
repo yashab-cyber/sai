@@ -851,6 +851,12 @@ class SAI:
 
             elif tool_name == "system.ask":
                 print(f"\n[SAI PROMPT] {params['prompt']}")
+                if getattr(self, '_gui_task', False):
+                    # Running from GUI — cannot block on CLI input
+                    return {
+                        "status": "error", 
+                        "response": "Currently running in GUI mode. You cannot block with system.ask. Please proceed autonomously or output your question as thought/action and the user will read it on the screen and reply in the next command."
+                    }
                 user_res = input("Your response: ").strip()
                 return {"status": "success", "response": user_res}
 
