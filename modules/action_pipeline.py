@@ -33,11 +33,16 @@ class ActionPipeline:
     MAX_TEST_ROUNDS = 10
     PHASES = ["plan", "research", "implement", "test", "publish"]
 
-    # Actions that produce/modify code and MUST go through the pipeline
+    # Actions that CREATE new repos/content — go through full pipeline
     CODE_ACTIONS = {
-        "create_repo", "improve_repo", "enhance_repo", "create_gist",
-        "trend_jack", "github_pages", "awesome_list", "daily_commit",
-        "self_issues", "fork_improve", "profile_readme", "create_release",
+        "create_repo", "trend_jack", "awesome_list", "github_pages", "create_gist",
+    }
+
+    # Actions that MODIFY existing repos — use their own handlers
+    # (improve_repo already has clone→test→fix→push, enhance_repo adds CI/gitignore, etc.)
+    EXISTING_REPO_ACTIONS = {
+        "improve_repo", "enhance_repo", "daily_commit", "self_issues",
+        "fork_improve", "profile_readme", "create_release",
     }
 
     # Actions that only call GitHub API — bypass the pipeline
