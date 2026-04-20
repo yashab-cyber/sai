@@ -41,6 +41,25 @@ def add_idle_log(entry: dict):
         del idle_logs[:-200]
     socketio.emit('idle_log_update', entry, namespace='/')
 
+    # Also push to the main event log stream
+    event_type = entry.get("type", "")
+    event_msgs = {
+        "action_start": "⚡ Idle: Starting autonomous action...",
+        "action_complete": f"✅ Idle: {entry.get('action', '?')} [{entry.get('status', '?')}] (#{entry.get('total', 0)})",
+        "action_error": f"❌ Idle error: {str(entry.get('error', ''))[:80]}",
+        "pipeline_start": f"🔧 Pipeline: {entry.get('action', '?')}",
+        "pipeline_end": f"{'✅' if entry.get('status') == 'success' else '❌'} Pipeline done: {entry.get('action', '?')} [{entry.get('status', '?')}]",
+        "pipeline_error": f"❌ Pipeline error: {str(entry.get('error', ''))[:80]}",
+        "phase": f"   ▸ Phase: {(entry.get('phase', '')).upper()}",
+        "phase_complete": f"   ✓ {(entry.get('phase', '')).upper()} complete",
+        "phase_error": f"   ✗ {entry.get('phase', '')} failed",
+        "quality_gate_failed": f"🚫 Quality gate failed ({entry.get('rounds', 0)} rounds)",
+        "next_cooldown": f"⏱ Next action in {entry.get('seconds', 0)}s",
+    }
+    msg = event_msgs.get(event_type)
+    if msg:
+        push_event(msg)
+
 # Changed to serve the React app directly
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
@@ -62,6 +81,7 @@ def handle_command():
     data = request.json
     command = data.get("command")
     if command and sai_instance:
+        push_event(f"📡 Command received: {command}")
         def _run_async_wrapper():
             import asyncio
             asyncio.run(sai_instance.run_task(command))
@@ -74,12 +94,24 @@ def handle_command():
 
 @socketio.on('connect')
 def handle_connect():
+    # Send initial state + a startup event if history is empty
+    if not state["history"]:
+        state["history"].append({"action": "🟢 SAI Cockpit connected. Systems online."})
     emit('state_update', state)
 
 def broadcast_state(new_state):
     """Update global state and broadcast to all connected clients."""
     state.update(new_state)
     socketio.emit('state_update', state)
+
+
+def push_event(text: str):
+    """Append an event to the history log and broadcast it."""
+    state["history"].append({"action": text})
+    # Keep history bounded
+    if len(state["history"]) > 200:
+        state["history"] = state["history"][-200:]
+    socketio.emit('state_update', {"history": state["history"]})
 
 
 def add_voice_transcript(entry):
