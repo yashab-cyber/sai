@@ -320,6 +320,7 @@ class ActionPipeline:
             # Test loop
             last_error = ""
             repeat_count = 0
+            installed_deps = set()  # Track what we've already installed
             for round_num in range(1, self.MAX_TEST_ROUNDS + 1):
                 self.logger.info("[TEST] Round %d/%d...", round_num, self.MAX_TEST_ROUNDS)
 
@@ -344,12 +345,32 @@ class ActionPipeline:
                             "stdout": exec_res.stdout[:500],
                         }
 
-                    # Test failed — check if environmental
+                    # Test failed — get full error details
                     crash_log = (exec_res.stderr or exec_res.stdout)[:2000]
+
+                    # ── Diagnose the failure reason ──
+                    failure_reason = self._diagnose_failure(crash_log)
                     self.logger.warning(
-                        "[TEST] ❌ FAIL round %d (exit %d): %s",
-                        round_num, exec_res.returncode, crash_log[:200],
+                        "[TEST] ❌ FAIL round %d (exit %d) — Reason: %s\n"
+                        "       Error: %s",
+                        round_num, exec_res.returncode,
+                        failure_reason["type"],
+                        failure_reason["detail"][:300],
                     )
+
+                    # ── Auto-install missing dependencies ──
+                    if failure_reason["type"] == "missing_module":
+                        module_name = failure_reason.get("module", "")
+                        if module_name and module_name not in installed_deps:
+                            install_ok = self._auto_install_dep(
+                                tmp_dir, module_name, failure_reason.get("ecosystem", "python")
+                            )
+                            installed_deps.add(module_name)
+                            if install_ok:
+                                self.logger.info(
+                                    "[TEST] 📦 Auto-installed '%s'. Retrying...", module_name,
+                                )
+                                continue  # Retry immediately, don't count as LLM fix attempt
 
                     # Detect repeated identical errors (environmental, not code)
                     error_sig = crash_log[:100]
@@ -524,6 +545,122 @@ class ActionPipeline:
             ".cs": ["bash", "-c", f"dotnet-script {filename}"],
         }
         return cmd_map.get(ext, ["python3", filename])
+
+    def _diagnose_failure(self, crash_log: str) -> dict:
+        """Parses crash log to identify the failure type and extract details."""
+        import re as _re
+
+        log = crash_log.strip()
+
+        # ── Python missing module ──
+        m = _re.search(r"ModuleNotFoundError:\s*No module named ['\"]?([a-zA-Z0-9_.]+)", log)
+        if m:
+            return {"type": "missing_module", "module": m.group(1).strip("'\""),
+                    "ecosystem": "python", "detail": m.group(0)}
+
+        m = _re.search(r"ImportError:\s*cannot import name ['\"]?(\S+?)['\"]? from ['\"]?(\S+?)['\"]?", log)
+        if m:
+            return {"type": "missing_module", "module": m.group(2).strip("'\""),
+                    "ecosystem": "python", "detail": m.group(0)}
+
+        # ── Node.js missing module ──
+        m = _re.search(r"Cannot find module ['\"]([^'\"]+)['\"]", log)
+        if m:
+            return {"type": "missing_module", "module": m.group(1).strip("'\""),
+                    "ecosystem": "node", "detail": m.group(0)}
+
+        m = _re.search(r"Error \[ERR_MODULE_NOT_FOUND\].*?['\"](\S+?)['\"]", log)
+        if m:
+            return {"type": "missing_module", "module": m.group(1).strip("'\""),
+                    "ecosystem": "node", "detail": m.group(0)}
+
+        # ── Go missing module ──
+        m = _re.search(r"no required module provides package (\S+)", log)
+        if m:
+            return {"type": "missing_module", "module": m.group(1),
+                    "ecosystem": "go", "detail": m.group(0)}
+
+        # ── Syntax errors ──
+        if "SyntaxError" in log:
+            m = _re.search(r"SyntaxError:\s*(.*)", log)
+            return {"type": "syntax_error", "detail": m.group(1) if m else log[:200]}
+
+        # ── Permission errors ──
+        if "PermissionError" in log or "Permission denied" in log:
+            return {"type": "permission_error", "detail": log[:200]}
+
+        # ── Type/Value/Key errors ──
+        for err_type in ("TypeError", "ValueError", "KeyError", "AttributeError",
+                         "NameError", "IndexError", "FileNotFoundError"):
+            if err_type in log:
+                m = _re.search(rf"{err_type}:\s*(.*)", log)
+                return {"type": "runtime_error", "error_class": err_type,
+                        "detail": m.group(1) if m else log[:200]}
+
+        # ── Test framework failures ──
+        if "FAILED" in log and ("pytest" in log.lower() or "test" in log.lower()):
+            m = _re.search(r"(\d+) failed", log)
+            return {"type": "test_failure", "detail": f"{m.group(1)} tests failed" if m else log[:200]}
+
+        # ── Generic ──
+        return {"type": "unknown", "detail": log[:300]}
+
+    def _auto_install_dep(self, tmp_dir: str, module_name: str, ecosystem: str) -> bool:
+        """Attempts to auto-install a missing dependency in the sandbox.
+        
+        Supports Python (pip), Node.js (npm), and Go modules.
+        """
+        # Map common Python import names to pip package names
+        pip_name_map = {
+            "cv2": "opencv-python", "PIL": "Pillow", "bs4": "beautifulsoup4",
+            "sklearn": "scikit-learn", "yaml": "pyyaml", "dotenv": "python-dotenv",
+            "gi": "PyGObject", "Crypto": "pycryptodome", "serial": "pyserial",
+            "usb": "pyusb", "jwt": "PyJWT", "magic": "python-magic",
+            "attr": "attrs", "dateutil": "python-dateutil",
+        }
+
+        try:
+            if ecosystem == "python":
+                pkg = pip_name_map.get(module_name, module_name)
+                self.logger.info("[TEST] 📦 pip install %s ...", pkg)
+                result = subprocess.run(
+                    ["pip", "install", pkg],
+                    cwd=tmp_dir, capture_output=True, text=True, timeout=60,
+                )
+                if result.returncode == 0:
+                    self.logger.info("[TEST] ✅ Installed Python package: %s", pkg)
+                    return True
+                self.logger.warning("[TEST] pip install failed: %s", result.stderr[:200])
+
+            elif ecosystem == "node":
+                # Skip relative/local imports
+                if module_name.startswith(".") or module_name.startswith("/"):
+                    return False
+                self.logger.info("[TEST] 📦 npm install %s ...", module_name)
+                result = subprocess.run(
+                    ["npm", "install", module_name],
+                    cwd=tmp_dir, capture_output=True, text=True, timeout=60,
+                )
+                if result.returncode == 0:
+                    self.logger.info("[TEST] ✅ Installed Node package: %s", module_name)
+                    return True
+                self.logger.warning("[TEST] npm install failed: %s", result.stderr[:200])
+
+            elif ecosystem == "go":
+                self.logger.info("[TEST] 📦 go get %s ...", module_name)
+                result = subprocess.run(
+                    ["go", "get", module_name],
+                    cwd=tmp_dir, capture_output=True, text=True, timeout=60,
+                )
+                if result.returncode == 0:
+                    self.logger.info("[TEST] ✅ Installed Go module: %s", module_name)
+                    return True
+                self.logger.warning("[TEST] go get failed: %s", result.stderr[:200])
+
+        except Exception as e:
+            self.logger.warning("[TEST] Auto-install failed for %s: %s", module_name, e)
+
+        return False
 
     def _attempt_fix(
         self, tmp_dir: str, crash_log: str, implementation: Dict[str, Any]
