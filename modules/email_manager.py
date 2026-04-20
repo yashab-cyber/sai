@@ -308,7 +308,29 @@ class EmailManager:
             if result.get("status") == "success":
                 for mail in result.get("emails", []):
                     body = mail.get("body", "") + " " + mail.get("subject", "")
-                    # Common OTP patterns
+                    if self.sai and hasattr(self.sai, "brain"):
+                        prompt = (
+                            f"You are S.A.I., an autonomous AI. Extract the OTP (One Time Password) or verification code from the following email.\n"
+                            f"EMAIL TEXT: {body[:1000]}\n\n"
+                            "If there is a verification code or OTP, return it. If none is found, return empty string.\n"
+                            'Respond in JSON: {"otp": "123456"}'
+                        )
+                        try:
+                            brain_resp = self.sai.brain.prompt("Extract OTP.", prompt)
+                            # brain.prompt() returns a dict (parsed JSON), not a string
+                            if isinstance(brain_resp, dict):
+                                data = brain_resp
+                            else:
+                                import json
+                                data = json.loads(str(brain_resp))
+                            code = data.get("otp", "")
+                            if code:
+                                self.logger.info("OTP extracted via Brain: %s", code)
+                                return {"status": "success", "otp": str(code), "from": mail.get("from", ""), "subject": mail.get("subject", "")}
+                        except Exception:
+                            pass
+
+                    # Fallback to Regex
                     patterns = [
                         r'\b(\d{4,8})\b',  # 4-8 digit codes
                         r'code[:\s]+(\d{4,8})',
@@ -320,7 +342,7 @@ class EmailManager:
                         match = re.search(pattern, body, re.IGNORECASE)
                         if match:
                             code = match.group(1)
-                            self.logger.info("OTP extracted: %s", code)
+                            self.logger.info("OTP extracted via Regex: %s", code)
                             return {"status": "success", "otp": code, "from": mail.get("from", ""), "subject": mail.get("subject", "")}
             time.sleep(5)
         return {"status": "error", "message": "No OTP found within timeout"}
@@ -563,29 +585,73 @@ class EmailManager:
 
     def _execute_email_command(self, command: str, sender: str):
         """Executes a command and emails the result back."""
-        self.logger.info("Executing email command: %s", command)
+        self.logger.info("Executing email command via Brain: %s", command)
         result = ""
 
         try:
-            if self.sai and hasattr(self.sai, "executor"):
-                # Route through SAI's executor for safety
+            if self.sai and hasattr(self.sai, "brain"):
+                prompt = (
+                    f"You are S.A.I., an autonomous AI. Your admin just sent you an email command: '{command}'.\n"
+                    "Analyze this command. If it is a bash/shell command (like 'ls', 'whoami', 'reboot'), return 'shell' as the type.\n"
+                    "If it is a conversational question or abstract request, return 'chat' and provide a conversational response in 'response_text'.\n"
+                    "If it requires executing a complex S.A.I. task, return 'task'.\n"
+                    'Respond in JSON: {"type": "shell|chat|task", "response_text": "...", "shell_command": "..."}'
+                )
+                brain_resp = self.sai.brain.prompt("Analyze email command.", prompt)
+                
+                # brain.prompt() returns a dict (parsed JSON), not a string
+                try:
+                    if isinstance(brain_resp, dict):
+                        data = brain_resp
+                    else:
+                        import json
+                        data = json.loads(str(brain_resp))
+                except Exception:
+                    data = {"type": "shell", "shell_command": command} # Fallback to original behavior
+                
+                cmd_type = data.get("type", "shell")
+                
+                if cmd_type == "chat":
+                    result = data.get("response_text", "I received your message.")
+                elif cmd_type == "shell":
+                    sh_cmd = data.get("shell_command", command)
+                    if hasattr(self.sai, "executor"):
+                        exec_result = self.sai.executor.execute_shell(sh_cmd)
+                        result = json.dumps(exec_result, indent=2, default=str)
+                    else:
+                        import subprocess
+                        proc = subprocess.run(sh_cmd, shell=True, capture_output=True, text=True, timeout=60)
+                        result = f"Exit Code: {proc.returncode}\n\nSTDOUT:\n{proc.stdout}\n\nSTDERR:\n{proc.stderr}"
+                else: # task
+                    if hasattr(self.sai, "run_task"):
+                        import asyncio
+                        import threading
+                        def _run_task_wrapper():
+                            asyncio.run(self.sai.run_task(command))
+                        threading.Thread(target=_run_task_wrapper, daemon=True).start()
+                        result = f"I have started working on the task:\n{command}\n\nI will continue autonomously."
+                    else:
+                        result = f"I understood this as a complex task, but the task runner is unavailable: {command}"
+                        
+            elif self.sai and hasattr(self.sai, "executor"):
+                # Fallback to direct execution if brain is not available
                 exec_result = self.sai.executor.execute_shell(command)
                 result = json.dumps(exec_result, indent=2, default=str)
             else:
-                # Fallback: direct subprocess
                 import subprocess
                 proc = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=60)
                 result = f"Exit Code: {proc.returncode}\n\nSTDOUT:\n{proc.stdout}\n\nSTDERR:\n{proc.stderr}"
+                
         except Exception as e:
             result = f"Execution error: {str(e)}"
 
         # Send result back
         self.send(
             sender, f"Re: Command Result — {command[:50]}",
-            f"🤖 S.A.I. Command Execution Report\n\n"
-            f"Command: {command}\n"
+            f"🤖 S.A.I. Intelligence Report\n\n"
+            f"Input: {command}\n"
             f"Time: {datetime.now().isoformat()}\n\n"
-            f"Result:\n{result[:5000]}"
+            f"Result/Response:\n{result[:5000]}"
         )
 
     # ══════════════════════════════════════════
@@ -654,8 +720,9 @@ class EmailManager:
         """Sleeps in small increments for clean shutdown."""
         elapsed = 0
         while elapsed < seconds and (self._report_running or self._cmd_running):
-            time.sleep(min(5, seconds - elapsed))
-            elapsed += 5
+            sleep_time = min(5, seconds - elapsed)
+            time.sleep(sleep_time)
+            elapsed += sleep_time
 
     def get_status(self) -> dict:
         """Returns email manager diagnostics."""

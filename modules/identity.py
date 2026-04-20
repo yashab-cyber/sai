@@ -90,12 +90,12 @@ class IdentityManager:
                                     try:
                                         body = part.get_payload(decode=True).decode()
                                         break
-                                    except:
+                                    except Exception:
                                         pass
                         else:
                             try:
                                 body = msg.get_payload(decode=True).decode()
-                            except:
+                            except Exception:
                                 pass
                                 
                         emails_data.append({

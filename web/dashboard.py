@@ -48,9 +48,9 @@ class DashboardManager:
 
     def update_state(self, thought=None, action=None, status=None):
         """Updates the state displayed on the dashboard."""
-        if thought: state["thought"] = thought
-        if action: state["action"] = action
-        if status: state["status"] = status
+        if thought is not None: state["thought"] = thought
+        if action is not None: state["action"] = action
+        if status is not None: state["status"] = status
 
     @property
     def is_active(self):

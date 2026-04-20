@@ -16,12 +16,22 @@ class MemoryManager:
         "semantic_memory",
     }
 
-    # Whitelisted column names for search queries
+    # Whitelisted column names for search queries and inserts
     VALID_COLUMNS = {
+        # history
         "task_id", "query", "plan", "action", "result", "status",
+        # codebase_map
         "file_path", "type", "name", "dependencies",
-        "module_name", "device_id", "key", "value",
-        "task_signature", "action_sequence",
+        # improvements
+        "module_name", "original_version", "improved_version", "metrics", "core_evolution",
+        # actions_history
+        "device_id", "request_json", "response_json", "latency_ms",
+        # user_preferences
+        "key", "value",
+        # learned_patterns
+        "task_signature", "action_sequence", "success_count", "failure_count",
+        # semantic_memory
+        "content", "metadata", "embedding",
     }
 
     def _validate_identifier(self, name: str, valid_set: set, kind: str = "identifier") -> str:
@@ -138,7 +148,9 @@ class MemoryManager:
     def save_memory(self, table: str, data: Dict[str, Any]):
         """Saves a record to the specified table."""
         table = self._validate_identifier(table, self.VALID_TABLES, "table")
-        columns = ", ".join(data.keys())
+        # Validate each column name to prevent SQL injection via crafted keys
+        validated_columns = [self._validate_identifier(col, self.VALID_COLUMNS, "column") for col in data.keys()]
+        columns = ", ".join(validated_columns)
         placeholders = ", ".join(["?"] * len(data))
         values = tuple(data.values())
         
@@ -367,6 +379,12 @@ class MemoryManager:
                 return results
 
         # Fallback: SQLite Brute-Force Numpy Search
+        if not has_embedding:
+            import logging
+            logging.getLogger("SAI.Memory").warning(
+                "SQLite semantic fallback skipped: no embedding provided and SQLite cannot do text-only search."
+            )
+            return []
         q_vec = np.array(query_embedding, dtype=np.float32)
         q_norm = np.linalg.norm(q_vec)
         if q_norm == 0:

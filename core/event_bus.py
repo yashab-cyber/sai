@@ -52,17 +52,24 @@ class EventBus:
                     # Execute all callbacks for this event concurrently
                     callbacks = self._subscribers[event_name]
                     tasks = [asyncio.create_task(cb(payload)) for cb in callbacks]
-                    if tasks:
-                        # We don't await tasks directly here because we want fire-and-forget,
-                        # but we can gather them to capture unhandled exceptions if we wanted.
-                        # For pure decoupled async, we let the event loop handle them.
-                        pass
+                    for t in tasks:
+                        t.add_done_callback(
+                            lambda fut, en=event_name: self._handle_task_exception(fut, en)
+                        )
                 
                 self._queue.task_done()
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 self.logger.error(f"Error processing event {event_name}: {e}")
+
+    def _handle_task_exception(self, fut: asyncio.Future, event_name: str):
+        """Logs unhandled exceptions from subscriber callbacks."""
+        if fut.cancelled():
+            return
+        exc = fut.exception()
+        if exc:
+            self.logger.error("Subscriber callback for event '%s' raised: %s", event_name, exc)
 
     def start(self):
         """Starts the event bus background worker."""

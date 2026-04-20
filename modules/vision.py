@@ -42,6 +42,8 @@ class VisionManager:
                 return {"status": "success", "image": pil_image}
                 
             # Convert PIL to OpenCV format (RGB -> BGR)
+            # Force RGB to handle RGBA/grayscale images safely
+            pil_image = pil_image.convert("RGB")
             open_cv_image = np.array(pil_image)
             open_cv_image = open_cv_image[:, :, ::-1].copy() 
             

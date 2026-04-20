@@ -27,7 +27,16 @@ class DependencyManager:
         "os", "sys", "json", "time", "re", "math", "random", "logging", "typing",
         "ast", "shutil", "sqlite3", "subprocess", "threading", "datetime", "pathlib",
         "base64", "hashlib", "argparse", "copy", "itertools", "collections", "uuid", "asyncio",
-        "imaplib", "smtplib", "email", "requests"
+        "imaplib", "smtplib", "email",
+    }
+
+    # Reverse mapping: pip package name -> import name (for dependency existence checks)
+    PIP_TO_IMPORT = {
+        "opencv-python": "cv2",
+        "beautifulsoup4": "bs4",
+        "pyyaml": "yaml",
+        "Pillow": "PIL",
+        "python-dotenv": "dotenv",
     }
 
     def __init__(self, workspace_dir: str):
@@ -93,10 +102,12 @@ class DependencyManager:
         import sys
         missing = []
         for pkg in packages:
+            # Use the import name (not pip name) to test if the package exists
+            import_name = self.PIP_TO_IMPORT.get(pkg, pkg)
             try:
                 # Quick test if it exists
-                subprocess.check_output([sys.executable, "-c", f"import {pkg}"])
-            except:
+                subprocess.check_output([sys.executable, "-c", f"import {import_name}"], stderr=subprocess.DEVNULL)
+            except Exception:
                 missing.append(pkg)
                 
         if not missing:

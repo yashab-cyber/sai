@@ -81,7 +81,7 @@ class BrowserManager:
             try:
                 await self.page.fill(selector, text, timeout=5000)
                 return {"status": "success"}
-            except:
+            except Exception:
                 # Step 2: Fallback to click and type (human-like)
                 self.logger.info(f"Fill failed on {selector}, falling back to click and type.")
                 await self.page.click(selector, force=True)

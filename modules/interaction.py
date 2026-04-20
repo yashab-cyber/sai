@@ -1,5 +1,6 @@
 import time
 import logging
+import shlex
 from typing import Optional, Dict
 
 class InteractionEngine:
@@ -26,7 +27,7 @@ class InteractionEngine:
             )
         elif dtype == "android":
             # For Termux we can use 'shell' with input tap if device has root/adb access
-            cmd = f"su -c input tap {x} {y}"
+            cmd = f"su -c input tap {int(x)} {int(y)}"
             # Fallback to non-su if needed, but input tap usually requires su or ADB shell
             return self.sai.device_manager.route_command(
                 device_id, "shell", {"cmd": cmd}
@@ -47,9 +48,9 @@ class InteractionEngine:
                 device_id, "type_text", {"text": text}
             )
         elif dtype == "android":
-            # Android input text needs escaping spaces
-            # safe_text = text.replace(" ", "%s")
-            cmd = f'su -c input text "{text}"'
+            # Android input text needs escaping for shell safety
+            safe_text = shlex.quote(text)
+            cmd = f'su -c input text {safe_text}'
             return self.sai.device_manager.route_command(
                 device_id, "shell", {"cmd": cmd}
             )

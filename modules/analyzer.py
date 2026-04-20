@@ -24,11 +24,7 @@ class Analyzer:
         for root, dirs, files in os.walk(self.base_dir):
             # Optimization: Modify dirs in-place to skip unwanted branches
             dirs_to_skip = ["venv", ".git", "__pycache__", "workspace", "artifacts"]
-            dirs[:] = [d for d in dirs if d not in dirs_to_skip]
-
-            # Skip hidden folders
-            if any(part.startswith('.') for part in root.split(os.sep)):
-                continue
+            dirs[:] = [d for d in dirs if d not in dirs_to_skip and not d.startswith('.')]
 
             for file in files:
                 if file.endswith(".py"):

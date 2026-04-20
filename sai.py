@@ -145,12 +145,12 @@ class SAI:
             self.logger.warning("Idle engine auto-start failed (non-fatal): %s", e)
 
         # Start email system (status reports + command listener)
-        email_config = self.config.get('email', {})
-        if email_config.get('enabled', True):
+        _email_conf = self.config.get('email', {})
+        if _email_conf.get('enabled', True):
             try:
-                if email_config.get('auto_start_reports', True):
+                if _email_conf.get('auto_start_reports', True):
                     self.email_mgr.start_status_reports()
-                if email_config.get('auto_start_commands', True):
+                if _email_conf.get('auto_start_commands', True):
                     # First: process any commands sent while we were offline
                     pending = self.email_mgr.process_pending_commands()
                     if pending.get("pending", 0) > 0:
@@ -206,10 +206,16 @@ class SAI:
             
         if task.startswith("run_rnd_task:"):
             print(f"\\n[S.A.I.] Initiating Autonomous R&D Lab for: {task}")
-            intent = task.split("run_rnd_task:", 1)[1].strip()
-            result = self.rnd_lab.run_rnd_task(intent)
-            print(f"\\n[S.A.I.] R&D Lab Completed. Result: {result}")
-            return result
+            self.is_running = True
+            self.idle_engine.pause()
+            try:
+                intent = task.split("run_rnd_task:", 1)[1].strip()
+                result = self.rnd_lab.run_rnd_task(intent)
+                print(f"\\n[S.A.I.] R&D Lab Completed. Result: {result}")
+                return result
+            finally:
+                self.is_running = False
+                self.idle_engine.resume()
             
         self.is_running = True
 
@@ -833,29 +839,7 @@ class SAI:
             elif tool_name == "swarm.delegate":
                 result = await self.swarm.delegate(params['task'])
                 return {"status": "success", "swarm_debrief": result}
-                
-            # Headless Browser Automation (Playwright)
-            elif tool_name == "browser.search":
-                return await self.browser.search(params['query'])
-            elif tool_name == "browser.navigate":
-                return await self.browser.navigate(params['url'])
-            elif tool_name == "browser.explore":
-                return await self.browser.get_interactive_elements()
-            elif tool_name == "browser.scrape":
-                return await self.browser.scrape_page_text()
-            elif tool_name == "browser.wait":
-                return await self.browser.wait_for(params['selector'], params.get('state', 'visible'))
-            elif tool_name == "browser.interact":
-                action = params.get('action')
-                selector = params.get('selector', '')
-                if action == 'click':
-                    return await self.browser.click(selector)
-                elif action == 'type':
-                    return await self.browser.type_text(selector, params.get('text', ''))
-                elif action == 'press':
-                    return await self.browser.press_key(selector, params.get('key', ''))
-                else:
-                    return {"status": "error", "message": f"Unknown interact action: {action}"}
+
 
             elif tool_name == "system.ask":
                 print(f"\n[SAI PROMPT] {params['prompt']}")
@@ -966,7 +950,11 @@ if __name__ == "__main__":
     if "--chat" in sys.argv:
         asyncio.run(sai.start_chat())
     elif len(sys.argv) > 1:
-        asyncio.run(sai.run_task(" ".join(sys.argv[1:])))
+        command_str = " ".join(sys.argv[1:])
+        if command_str.lower() in ["gui", "--gui"]:
+            print("\n[S.A.I.] Starting in GUI-only mode, sir.")
+        else:
+            asyncio.run(sai.run_task(command_str))
         
         # Keep process alive if GUI or Dashboard was started
         if sai.gui.is_active or sai.dashboard.is_active:

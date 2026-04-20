@@ -84,6 +84,9 @@ class Planner:
         """
         Plans multiple steps toward completing a complex goal, recursively generating subtasks.
         """
+        if depth <= 0:
+            return []
+
         self.logger.info(f"Planning multi-step actions for task: {main_task}")
         plan = []
         subtasks = self.generate_subtasks(main_task)

@@ -1,5 +1,6 @@
 import logging
 import re
+import shlex
 from typing import Dict, Any
 
 class SystemManager:
@@ -90,7 +91,7 @@ class SystemManager:
         results = []
         
         for app in apps_to_kill:
-            res = self.executor.execute_shell(f"pkill {app}")
+            res = self.executor.execute_shell(f"pkill {shlex.quote(app)}")
             results.append({"app": app, "status": res["status"]})
             
         self.logger.info("Workspace cleanup completed.")

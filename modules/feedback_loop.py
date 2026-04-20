@@ -40,8 +40,8 @@ class FeedbackLoop:
             # 1. Execute Physical Action
             res = self._run_action(device_id, step)
             
-            # Allow UI to settle
-            time.sleep(0.1)
+            # Allow UI to settle (remote devices need ~500ms for screen transitions)
+            time.sleep(0.5)
             
             # 2. Vision Verification
             if self._verify_outcome(device_id, step):

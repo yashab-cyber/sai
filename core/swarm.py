@@ -132,7 +132,10 @@ class SwarmOrchestrator:
         synthesis_prompt = "Synthesize these sub-agent histories into a master completion debrief.\n"
         for res in results:
             agent_name = res['agent']
-            final_obs = res['history'][-1]['observation'] if res['history'] else 'No actions taken.'
+            if res.get('history'):
+                final_obs = res['history'][-1].get('observation', 'No observation.')
+            else:
+                final_obs = 'No actions taken.'
             synthesis_prompt += f"\nAgent {agent_name} Final State:\n{final_obs}\n"
             
         final_debrief = self.sai.brain.prompt("You are a master orchestrator summarizing a swarm task in a JARVIS tone. Respond with a JSON object containing a 'thought' field containing the debrief.", synthesis_prompt).get("thought", "Swarm synthesis complete.")

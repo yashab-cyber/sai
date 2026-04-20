@@ -95,7 +95,12 @@ class RnDLabManager:
                 return {"status": "discarded", "message": reason, "report": report_path}
             elif action == "escalate":
                 logger.info("Requiring manual intervention (escalation).")
-                self.approval.request_approval(reason=reason + "\nDo you wish to forcefully integrate despite failures?")
-                return {"status": "escalated"}
+                approved = self.approval.request_approval(reason=reason + "\nDo you wish to forcefully integrate despite failures?")
+                if approved:
+                    logger.info("Forced integration approved via escalation.")
+                    return {"status": "success", "message": "Forced integration approved via escalation.", "report": report_path}
+                else:
+                    logger.info("Escalation denied by user.")
+                    return {"status": "denied", "message": "Escalation denied by user.", "report": report_path}
 
         return {"status": "timeout", "message": "Max retries reached."}

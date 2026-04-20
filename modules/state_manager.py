@@ -30,6 +30,9 @@ class StateManager:
             "result": result or {}
         }
         self.history.append({"task_id": task_id, "status": status, "result": result})
+        # Prevent unbounded memory growth
+        if len(self.history) > 100:
+            self.history = self.history[-100:]
 
     def get_context(self) -> dict:
         """Returns current operational state for the LLM."""

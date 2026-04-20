@@ -24,10 +24,10 @@ class GitHubPresence:
     IDLE_ACTIONS = [
         # Original actions
         {"name": "create_repo", "weight": 15},
-        {"name": "update_profile", "weight": 0},
+        {"name": "update_profile", "weight": 5},
         {"name": "improve_repo", "weight": 50},  # Heavily prioritize bug hunting and sandboxing
         {"name": "create_gist", "weight": 5},
-        {"name": "star_trending", "weight": 0},
+        {"name": "star_trending", "weight": 5},
         {"name": "update_status", "weight": 3},
         # New: Viral growth actions
         {"name": "profile_readme", "weight": 0},
@@ -72,7 +72,8 @@ class GitHubPresence:
     def _record_action(self, action_name: str, details: dict):
         record = {"action": action_name, "timestamp": datetime.now().isoformat(), "details": details}
         self.action_history.append(record)
-        self._daily_action_count += 1
+        if "improve_repo" not in action_name and "enhance_repo" not in action_name:
+            self._daily_action_count += 1
         try:
             content = f"GitHub Presence: {action_name} — {json.dumps(details)[:500]}"
             embedding = self.brain.get_embedding(content)
@@ -90,8 +91,6 @@ class GitHubPresence:
     def run_idle_action(self) -> Dict[str, Any]:
         """Selects and executes a strategic GitHub idle action.
         If there is pending work from a previous interruption, resumes that first."""
-        if not self._check_daily_limit():
-            return {"status": "skipped", "reason": "daily_limit_reached"}
         if not self.github_user or not self.identity.github_token:
             return {"status": "error", "message": "GitHub credentials not configured."}
 
@@ -100,8 +99,20 @@ class GitHubPresence:
             self.logger.info("Resuming pending work: %s", self._pending_work.get("action", "unknown"))
             return self.execute_pending_work()
 
-        weights = [a["weight"] for a in self.IDLE_ACTIONS]
-        selected = random.choices(self.IDLE_ACTIONS, weights=weights, k=1)[0]
+        under_limit = self._check_daily_limit()
+        
+        valid_actions = []
+        for a in self.IDLE_ACTIONS:
+            if not under_limit and a["name"] not in ["improve_repo", "enhance_repo"]:
+                continue
+            if a["weight"] > 0:
+                valid_actions.append(a)
+
+        if not valid_actions:
+            return {"status": "skipped", "reason": "daily_limit_reached"}
+
+        weights = [a["weight"] for a in valid_actions]
+        selected = random.choices(valid_actions, weights=weights, k=1)[0]
         action_name = selected["name"]
         self.logger.info("Idle action selected: %s", action_name)
 
@@ -234,13 +245,13 @@ class GitHubPresence:
         prompt = (
             f"You are S.A.I., an autonomous AI (GitHub: {self.github_user}) created and developed by Yashab-Cyber.\n"
             f"{self._get_recent_context()}\n\n"
-            "Generate a unique open-source project idea (complex programs, CLI tools, web apps, security utilities, "
-            "AI helpers, or creative viral projects). You are capable of programming in ANY programming language (e.g., Python, TypeScript, JavaScript, Go, Rust, C++) and using frameworks like React, Next.js, etc.\n"
+            "Generate a unique open-source project idea. You are a Polyglot Architect capable of programming in ANY language (Python, TypeScript, Go, Rust) and frameworks like React or Django.\n"
+            "Create a multi-file 'project_manifest.json' blueprint outlining frontend, backend, and config files.\n"
             "In the README, you MUST explicitly state: 'Created by S.A.I., an autonomous AI agent developed by Yashab-Cyber.'\n"
             "Respond in valid JSON:\n"
             '{"repo_name":"lowercase-name","description":"one-line","topics":["t1","t2"],'
-            '"readme_content":"full README.md","main_file_name":"e.g. main.py, index.js, or main.go",'
-            '"main_file_content":"complete working code in the chosen language"}'
+            '"readme_content":"full README.md",'
+            '"files": [{"path": "package.json", "content": "..."}, {"path": "src/index.js", "content": "..."}]}'
         )
         response = self.brain.prompt("Generate project for SAI GitHub.", prompt)
         try:
@@ -327,18 +338,32 @@ class GitHubPresence:
 
             script_path = os.path.join(tmp_dir, main_script)
             
-            # Determine execution command based on extension
-            ext = os.path.splitext(main_script)[1]
-            if ext == ".js":
-                run_cmd = ["node", main_script]
-            elif ext == ".go":
-                run_cmd = ["go", "run", main_script]
-            elif ext == ".sh":
-                run_cmd = ["bash", main_script]
-            elif ext == ".rb":
-                run_cmd = ["ruby", main_script]
+            # Determine execution command via Adaptive Sandbox Testing
+            if os.path.exists(os.path.join(tmp_dir, "package.json")):
+                self.logger.info("Node.js environment detected. Running npm install & test/build...")
+                subprocess.run(["npm", "install"], cwd=tmp_dir, capture_output=True, timeout=60)
+                run_cmd = ["bash", "-c", f"npm run build --if-present || npm test --if-present || node {main_script}"]
+            elif os.path.exists(os.path.join(tmp_dir, "manage.py")):
+                self.logger.info("Django environment detected.")
+                run_cmd = ["python3", "manage.py", "check"]
+            elif os.path.exists(os.path.join(tmp_dir, "go.mod")):
+                self.logger.info("Go environment detected.")
+                run_cmd = ["go", "build", "./..."]
+            elif os.path.exists(os.path.join(tmp_dir, "Cargo.toml")):
+                self.logger.info("Rust environment detected.")
+                run_cmd = ["cargo", "check"]
             else:
-                run_cmd = ["python3", main_script] # Default to python
+                ext = os.path.splitext(main_script)[1]
+                if ext == ".js":
+                    run_cmd = ["node", main_script]
+                elif ext == ".go":
+                    run_cmd = ["go", "run", main_script]
+                elif ext == ".sh":
+                    run_cmd = ["bash", main_script]
+                elif ext == ".rb":
+                    run_cmd = ["ruby", main_script]
+                else:
+                    run_cmd = ["python3", main_script] # Default to python
             
             # Read original code
             with open(script_path, "r") as f:
@@ -366,26 +391,35 @@ class GitHubPresence:
 
                     # Ask LLM to fix the bug
                     prompt = (
-                        f"You are S.A.I., an autonomous AI. You wrote the following script `{main_script}` which crashed during sandbox testing.\n"
+                        f"You are S.A.I., an autonomous AI. Your project crashed during sandbox testing.\n"
                         f"CRASH LOG:\n{crash_log[-1500:]}\n\n"
-                        f"ORIGINAL CODE:\n{original_code}\n\n"
-                        "Identify the bug and provide the complete, fixed code.\n"
-                        'Respond in JSON: {"fixed_code": "complete working code"}'
+                        f"ORIGINAL SCRIPT (`{main_script}`):\n{original_code}\n\n"
+                        "Identify the bug and provide the complete, fixed code for the relevant file. If multiple files need fixes, return them in the 'files' array.\n"
+                        'Respond in JSON: {"files": [{"path": "relative/path/to/file", "content": "fixed code"}]}'
                     )
                     
                     fix_response = self.brain.prompt("Fix sandboxed code crash.", prompt)
                     fix_data = self._parse_json(fix_response)
                     
-                    fixed_code = fix_data.get("fixed_code")
-                    if fixed_code and fixed_code != original_code:
-                        self.logger.info("Applying LLM bug fix...")
-                        with open(script_path, "w") as f:
-                            f.write(fixed_code)
+                    fixed_files = fix_data.get("files", [])
+                    if "fixed_code" in fix_data and not fixed_files:
+                        fixed_files = [{"path": main_script, "content": fix_data["fixed_code"]}]
+
+                    if fixed_files:
+                        self.logger.info("Applying LLM bug fixes to %d files...", len(fixed_files))
+                        for f_obj in fixed_files:
+                            f_path = f_obj.get("path")
+                            f_content = f_obj.get("content")
+                            if f_path and f_content:
+                                full_path = os.path.join(tmp_dir, f_path)
+                                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                                with open(full_path, "w") as file_out:
+                                    file_out.write(f_content)
+                                subprocess.run(["git", "add", f_path], cwd=tmp_dir, check=True)
                         
                         # Commit and push
                         subprocess.run(["git", "config", "user.name", "S.A.I. Autonomous Agent"], cwd=tmp_dir, check=True)
                         subprocess.run(["git", "config", "user.email", self.identity.email_address], cwd=tmp_dir, check=True)
-                        subprocess.run(["git", "add", main_script], cwd=tmp_dir, check=True)
                         subprocess.run(["git", "commit", "-m", "fix: Autonomous bug fix applied after sandbox testing"], cwd=tmp_dir, check=True)
                         
                         push_res = subprocess.run(["git", "push", "origin", "main"], cwd=tmp_dir, capture_output=True, text=True)
@@ -431,7 +465,21 @@ class GitHubPresence:
 
     def _action_star_trending(self) -> dict:
         """Stars trending repos for network visibility."""
-        search = self.identity.github_api_request("GET", "search/repositories?q=language:python+stars:>100&sort=stars&per_page=10")
+        prompt = (
+            "You are S.A.I., an autonomous AI. Choose a creative and specific search query to find interesting GitHub repositories to star.\n"
+            "For example: 'topic:ai language:rust', 'machine-learning good-first-issues:>10', or 'language:python stars:>500'.\n"
+            'Respond in JSON: {"query": "your search query"}'
+        )
+        response = self.brain.prompt("Generate GitHub search query.", prompt)
+        try:
+            data = self._parse_json(response)
+            query = data.get("query", "language:python+stars:>100")
+        except Exception:
+            query = "language:python+stars:>100"
+            
+        import urllib.parse
+        encoded_query = urllib.parse.quote(query)
+        search = self.identity.github_api_request("GET", f"search/repositories?q={encoded_query}&sort=stars&per_page=10")
         if search.get("status") != "success":
             return {"status": "error", "message": "Search failed"}
         items = search.get("data", {}).get("items", [])
@@ -476,10 +524,19 @@ class GitHubPresence:
             })
             import time; time.sleep(2)
 
+        # Fetch recent repos to give the brain context
+        repos = self.identity.github_api_request("GET", f"users/{self.github_user}/repos?sort=updated&per_page=5")
+        repo_context = ""
+        if repos.get("status") == "success":
+            repo_list = [r.get("name") for r in repos.get("data", []) if isinstance(r, dict)]
+            if repo_list:
+                repo_context = "Here are your recent projects: " + ", ".join(repo_list) + ".\n"
+
         prompt = (
             f"You are S.A.I., autonomous AI on GitHub ({self.github_user}). Generate a stunning profile README.md.\n"
+            f"{repo_context}"
             "Include: banner header, intro about being an autonomous AI, tech stack badges, "
-            "recent projects section, stats placeholder, fun facts, contact info.\n"
+            "recent projects section (mention the actual projects if provided), stats placeholder, fun facts, contact info.\n"
             "You MUST explicitly state that S.A.I. was created and is developed by Yashab-Cyber.\n"
             "Use emojis, markdown badges from shields.io, and make it visually impressive.\n"
             'Respond in JSON: {{"readme":"full README.md content"}}'
@@ -533,11 +590,25 @@ class GitHubPresence:
             except Exception:
                 pass
 
-        new_entry = f"\n## [{today}]\n- Autonomous maintenance by S.A.I.\n- System health check passed ✅\n"
+        prompt = (
+            f"You are S.A.I., autonomous AI. You are doing a daily maintenance commit on the repository '{repo_name}'.\n"
+            "Generate a realistic and creative changelog entry and commit message.\n"
+            "Include emojis and make it sound like an AI is maintaining it.\n"
+            'Respond in JSON: {"commit_message": "chore: ...", "changelog_entry": "## [Date]\\n- ..."}'
+        )
+        response = self.brain.prompt("Generate daily commit.", prompt)
+        try:
+            data = self._parse_json(response)
+            commit_msg = data.get("commit_message", f"chore: daily maintenance — {today}")
+            new_entry = "\n" + data.get("changelog_entry", f"## [{today}]\n- Autonomous maintenance by S.A.I.\n- System health check passed ✅") + "\n"
+        except Exception:
+            commit_msg = f"chore: daily maintenance — {today}"
+            new_entry = f"\n## [{today}]\n- Autonomous maintenance by S.A.I.\n- System health check passed ✅\n"
+
         content = current + new_entry if current else f"# Changelog\n{new_entry}"
 
         payload = {
-            "message": f"chore: daily maintenance — {today}",
+            "message": commit_msg,
             "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"),
         }
         if sha:
@@ -549,10 +620,10 @@ class GitHubPresence:
         """Creates a repo around a currently trending topic."""
         prompt = (
             f"You are S.A.I. ({self.github_user}). What's a hot trending topic in tech right now?\n"
-            "Create a small but useful Python tool related to it.\n"
+            "Create a full-stack or multi-file project related to it using any relevant language or framework (e.g., Node, Go, Rust, React, Python).\n"
             'Respond in JSON: {{"repo_name":"name","description":"one-line",'
             '"topics":["t1","t2"],"readme_content":"full README",'
-            '"main_file_name":"main.py","main_file_content":"working code"}}'
+            '"files": [{{"path": "package.json", "content": "..."}}, {{"path": "index.js", "content": "..."}}]}}'
         )
         response = self.brain.prompt("Create trending topic repo.", prompt)
         try:
@@ -630,16 +701,75 @@ class GitHubPresence:
         # Add .gitignore if missing
         gi_check = self.identity.github_api_request("GET", f"repos/{self.github_user}/{repo_name}/contents/.gitignore")
         if gi_check.get("status") != "success":
-            gitignore = "__pycache__/\n*.pyc\n.env\nvenv/\ndist/\n*.egg-info/\n.pytest_cache/\n"
+            prompt = (
+                f"You are S.A.I., autonomous AI. Generate a comprehensive .gitignore file for the repository '{repo_name}'.\n"
+                "Include standard ignores for Python, Node.js, Go, or general projects based on what might be useful.\n"
+                'Respond in JSON: {"gitignore": "..."}'
+            )
+            response = self.brain.prompt("Generate gitignore.", prompt)
+            try:
+                data = self._parse_json(response)
+                gitignore = data.get("gitignore", "__pycache__/\n*.pyc\n.env\nvenv/\ndist/\n*.egg-info/\n.pytest_cache/\n")
+            except Exception:
+                gitignore = "__pycache__/\n*.pyc\n.env\nvenv/\ndist/\n*.egg-info/\n.pytest_cache/\n"
+                
             self.identity.github_api_request("PUT", f"repos/{self.github_user}/{repo_name}/contents/.gitignore", {
                 "message": "chore: add .gitignore", "content": base64.b64encode(gitignore.encode()).decode()
             })
             added.append(".gitignore")
 
+        # Add requirements.txt if missing, only if needed
+        req_check = self.identity.github_api_request("GET", f"repos/{self.github_user}/{repo_name}/contents/requirements.txt")
+        if req_check.get("status") != "success":
+            contents_check = self.identity.github_api_request("GET", f"repos/{self.github_user}/{repo_name}/contents")
+            if contents_check.get("status") == "success":
+                items = contents_check.get("data", [])
+                py_files = [item for item in items if isinstance(item, dict) and item.get("name", "").endswith(".py")]
+                if py_files:
+                    # Fetch first python file to give the LLM context
+                    py_file = py_files[0]
+                    file_data = self.identity.github_api_request("GET", f"repos/{self.github_user}/{repo_name}/contents/{py_file['name']}")
+                    if file_data.get("status") == "success":
+                        content = ""
+                        try:
+                            content = base64.b64decode(file_data["data"].get("content", "")).decode("utf-8")
+                        except Exception:
+                            pass
+                        
+                        if content:
+                            prompt = (
+                                f"Analyze this Python code from the repository '{repo_name}':\n\n{content[:2000]}\n\n"
+                                "Does it need external dependencies (like requests, flask, etc.)? "
+                                "If it only uses standard libraries, return needs_requirements as false.\n"
+                                'Respond in JSON: {"needs_requirements": true, "requirements_content": "pkg1\\npkg2\\n"}'
+                            )
+                            response = self.brain.prompt("Generate requirements.txt.", prompt)
+                            try:
+                                data = self._parse_json(response)
+                                if data.get("needs_requirements") and data.get("requirements_content"):
+                                    self.identity.github_api_request("PUT", f"repos/{self.github_user}/{repo_name}/contents/requirements.txt", {
+                                        "message": "chore: add requirements.txt", 
+                                        "content": base64.b64encode(data["requirements_content"].encode()).decode()
+                                    })
+                                    added.append("requirements.txt")
+                            except Exception:
+                                pass
+
         # Add GitHub Actions CI workflow if missing
         ci_check = self.identity.github_api_request("GET", f"repos/{self.github_user}/{repo_name}/contents/.github/workflows/ci.yml")
         if ci_check.get("status") != "success":
-            ci_yaml = "name: CI\non: [push, pull_request]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n    - uses: actions/checkout@v4\n    - uses: actions/setup-python@v5\n      with:\n        python-version: '3.10'\n    - run: pip install -r requirements.txt 2>/dev/null || true\n    - run: python -m pytest tests/ 2>/dev/null || echo 'No tests yet'\n"
+            prompt = (
+                f"You are S.A.I., autonomous AI. Generate a GitHub Actions CI workflow (YAML) for the repository '{repo_name}'.\n"
+                "Make it a generic but robust CI that checks out the code, sets up Python/Node, and runs basic tests or linting if available.\n"
+                'Respond in JSON: {"ci_yaml": "name: CI..."}'
+            )
+            response = self.brain.prompt("Generate CI workflow.", prompt)
+            try:
+                data = self._parse_json(response)
+                ci_yaml = data.get("ci_yaml", "name: CI\non: [push, pull_request]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n    - uses: actions/checkout@v4\n    - uses: actions/setup-python@v5\n      with:\n        python-version: '3.10'\n    - run: pip install -r requirements.txt 2>/dev/null || true\n    - run: python -m pytest tests/ 2>/dev/null || echo 'No tests yet'\n")
+            except Exception:
+                ci_yaml = "name: CI\non: [push, pull_request]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n    - uses: actions/checkout@v4\n    - uses: actions/setup-python@v5\n      with:\n        python-version: '3.10'\n    - run: pip install -r requirements.txt 2>/dev/null || true\n    - run: python -m pytest tests/ 2>/dev/null || echo 'No tests yet'\n"
+
             self.identity.github_api_request("PUT", f"repos/{self.github_user}/{repo_name}/contents/.github/workflows/ci.yml", {
                 "message": "ci: add GitHub Actions workflow", "content": base64.b64encode(ci_yaml.encode()).decode()
             })
@@ -672,9 +802,23 @@ class GitHubPresence:
         else:
             new_tag = "v1.0.0"
 
+        prompt = (
+            f"You are S.A.I., autonomous AI. You are creating release {new_tag} for repository '{repo_name}'.\n"
+            "Generate engaging release notes highlighting autonomous stability improvements and code quality updates.\n"
+            'Respond in JSON: {"release_name": "...", "body": "## ...\\n\\n..."}'
+        )
+        response = self.brain.prompt("Generate release notes.", prompt)
+        try:
+            data = self._parse_json(response)
+            release_name = data.get("release_name", f"Release {new_tag}")
+            release_body = data.get("body", f"## {new_tag}\n\nAutonomous release by S.A.I.\n\n- Stability improvements\n- Code quality updates")
+        except Exception:
+            release_name = f"Release {new_tag}"
+            release_body = f"## {new_tag}\n\nAutonomous release by S.A.I.\n\n- Stability improvements\n- Code quality updates"
+
         result = self.identity.github_api_request("POST", f"repos/{self.github_user}/{repo_name}/releases", {
-            "tag_name": new_tag, "name": f"Release {new_tag}",
-            "body": f"## {new_tag}\n\nAutonomous release by S.A.I.\n\n- Stability improvements\n- Code quality updates",
+            "tag_name": new_tag, "name": release_name,
+            "body": release_body,
             "draft": False, "prerelease": False
         })
         return {"status": result.get("status", "error"), "repo": repo_name, "tag": new_tag}
@@ -696,14 +840,40 @@ class GitHubPresence:
             name = repo.get("name", "")
             desc = repo.get("description", "") or ""
             if "⭐" not in desc:
+                prompt = (
+                    f"You are S.A.I., autonomous AI. You are highlighting your project '{name}' with current description '{desc}'.\n"
+                    "Generate a short, punchy new description (max 100 chars) that starts with '⭐' and mentions it's by S.A.I.\n"
+                    'Respond in JSON: {"description": "⭐ ..."}'
+                )
+                response = self.brain.prompt("Generate pinned repo description.", prompt)
+                try:
+                    data = self._parse_json(response)
+                    new_desc = data.get("description", f"⭐ {desc}" if desc else "⭐ Featured project by S.A.I.")
+                except Exception:
+                    new_desc = f"⭐ {desc}" if desc else "⭐ Featured project by S.A.I."
+
                 self.identity.github_api_request("PATCH", f"repos/{self.github_user}/{name}", {
-                    "description": f"⭐ {desc}" if desc else "⭐ Featured project by S.A.I."
+                    "description": new_desc
                 })
         return {"status": "success", "pinned": pinned_names}
 
     def _action_follow_devs(self) -> dict:
         """Follows popular AI/Python developers to increase network visibility."""
-        search = self.identity.github_api_request("GET", "search/users?q=language:python+followers:>1000&sort=followers&per_page=10")
+        prompt = (
+            "You are S.A.I., an autonomous AI. Choose a creative and specific search query to find interesting GitHub users/developers to follow.\n"
+            "For example: 'language:python followers:>1000', 'location:san-francisco language:rust', or 'machine-learning'.\n"
+            'Respond in JSON: {"query": "your search query"}'
+        )
+        response = self.brain.prompt("Generate GitHub user search query.", prompt)
+        try:
+            data = self._parse_json(response)
+            query = data.get("query", "language:python+followers:>1000")
+        except Exception:
+            query = "language:python+followers:>1000"
+            
+        import urllib.parse
+        encoded_query = urllib.parse.quote(query)
+        search = self.identity.github_api_request("GET", f"search/users?q={encoded_query}&sort=followers&per_page=10")
         if search.get("status") != "success":
             return {"status": "error", "message": "Search failed"}
         users = search.get("data", {}).get("items", [])
@@ -747,7 +917,21 @@ class GitHubPresence:
 
     def _action_fork_improve(self) -> dict:
         """Forks a popular repo and adds a small improvement."""
-        search = self.identity.github_api_request("GET", "search/repositories?q=language:python+stars:100..5000+good-first-issues:>0&sort=updated&per_page=10")
+        prompt = (
+            "You are S.A.I., an autonomous AI. Choose a creative search query to find open-source repositories with good first issues to fork and improve.\n"
+            "For example: 'language:python stars:100..5000 good-first-issues:>0', 'topic:machine-learning help-wanted-issues:>0'.\n"
+            'Respond in JSON: {"query": "your search query"}'
+        )
+        response = self.brain.prompt("Generate GitHub fork search query.", prompt)
+        try:
+            data = self._parse_json(response)
+            query = data.get("query", "language:python+stars:100..5000+good-first-issues:>0")
+        except Exception:
+            query = "language:python+stars:100..5000+good-first-issues:>0"
+            
+        import urllib.parse
+        encoded_query = urllib.parse.quote(query)
+        search = self.identity.github_api_request("GET", f"search/repositories?q={encoded_query}&sort=updated&per_page=10")
         if search.get("status") != "success":
             return {"status": "error", "message": "Search failed"}
         items = search.get("data", {}).get("items", [])
@@ -798,11 +982,26 @@ class GitHubPresence:
         repo_list = repos.get("data", [])
         if not repo_list:
             return {"status": "skipped", "reason": "no_repos"}
+            
         target = random.choice(repo_list)
         repo_name = target.get("name", "")
+        
+        prompt = (
+            f"You are S.A.I., autonomous AI. You are enabling GitHub Discussions for '{repo_name}'.\n"
+            "Generate an engaging welcome message for the community to discuss this project.\n"
+            'Respond in JSON: {"welcome_message": "Welcome everyone! ..."}'
+        )
+        response = self.brain.prompt("Generate discussion welcome.", prompt)
+        try:
+            data = self._parse_json(response)
+            welcome_msg = data.get("welcome_message", "Welcome to discussions!")
+        except Exception:
+            welcome_msg = "Welcome to discussions!"
+
         # Enable discussions (requires PATCH)
         self.identity.github_api_request("PATCH", f"repos/{self.github_user}/{repo_name}", {"has_discussions": True})
-        return {"status": "success", "repo": repo_name, "action": "discussions_enabled"}
+        self.logger.info("Enabled discussions for %s. Intended welcome: %s", repo_name, welcome_msg)
+        return {"status": "success", "repo": repo_name, "action": "discussions_enabled", "welcome_message": welcome_msg}
 
     # ── UTILITIES ──
 
@@ -830,9 +1029,22 @@ class GitHubPresence:
 
             with open(os.path.join(tmp_dir, "README.md"), "w") as f:
                 f.write(project.get("readme_content", f"# {project.get('repo_name', 'SAI Project')}"))
-            main_file = project.get("main_file_name", "main.py")
-            with open(os.path.join(tmp_dir, main_file), "w") as f:
-                f.write(project.get("main_file_content", "# Generated by S.A.I."))
+            
+            # Handle multi-file 'project_manifest.json' architecture
+            files = project.get("files", [])
+            if not files:
+                main_file = project.get("main_file_name", "main.py")
+                with open(os.path.join(tmp_dir, main_file), "w") as f:
+                    f.write(project.get("main_file_content", "# Generated by S.A.I."))
+            else:
+                for file_obj in files:
+                    file_path = file_obj.get("path")
+                    file_content = file_obj.get("content", "")
+                    if file_path:
+                        full_path = os.path.join(tmp_dir, file_path)
+                        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                        with open(full_path, "w") as f:
+                            f.write(file_content)
             year = datetime.now().year
             with open(os.path.join(tmp_dir, "LICENSE"), "w") as f:
                 f.write(f"MIT License\n\nCopyright (c) {year} S.A.I.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software...\n")

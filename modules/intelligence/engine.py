@@ -14,7 +14,6 @@ from modules.intelligence.code_generator import CodeGenerator
 from modules.intelligence.dashboard_runner import DashboardRunner
 from modules.intelligence.voice_explainer import VoiceExplainer
 from modules.intelligence.report_generator import ReportGenerator
-from modules.intelligence.voice_explainer import VoiceExplainer
 
 logger = logging.getLogger("SAI.Intelligence.Engine")
 

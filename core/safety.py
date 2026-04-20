@@ -36,7 +36,9 @@ class SafetyManager:
         "ls", "cat", "echo", "pwd", "date", "grep", "find", "git",
         "mkdir", "rm", "cp", "mv", "touch", "chmod", "curl", "wget",
         "mousepad", "firefox", "chromium", "gnome-terminal", "code",
-        "wmctrl", "xdotool", "free", "df", "uptime", "scrot", "sensors"
+        "wmctrl", "xdotool", "free", "df", "uptime", "scrot", "sensors",
+        "pip", "pip3", "python3", "npm", "node",
+        "flake8", "black", "pytest",
     ]
 
     def __init__(self, base_dir: str):
@@ -103,8 +105,15 @@ class SafetyManager:
         """
         if ip == "127.0.0.1" or ip == "localhost":
             return True
-        if ip.startswith("192.168.") or ip.startswith("10.") or ip.startswith("172."):
+        if ip.startswith("192.168.") or ip.startswith("10."):
             return True
+        if ip.startswith("172."):
+            try:
+                second_octet = int(ip.split(".")[1])
+                if 16 <= second_octet <= 31:
+                    return True
+            except (IndexError, ValueError):
+                pass
         self.logger.warning(f"BLOCKED unauthorized network IP: {ip}")
         return False
 

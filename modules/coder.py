@@ -1,5 +1,6 @@
 import logging
 import ast
+import shlex
 import subprocess
 from typing import Dict, Any, Optional, List
 from core.executor import Executor
@@ -208,16 +209,16 @@ class Coder:
 
     def lint_code(self, path: str) -> Dict[str, Any]:
         """Runs flake8 on a given file."""
-        return self.executor.execute_shell(f"flake8 {path}")
+        return self.executor.execute_shell(f"flake8 {shlex.quote(path)}")
 
     def format_code(self, path: str) -> Dict[str, Any]:
         """Runs black auto-formatter silently to preserve code hygiene."""
-        res = self.executor.execute_shell(f"black {path}")
+        res = self.executor.execute_shell(f"black {shlex.quote(path)}")
         return res
 
     def run_tests(self, path: str) -> Dict[str, Any]:
         """Runs pytest for a specific file or directory."""
-        return self.executor.execute_shell(f"pytest {path} -v --tb=short")
+        return self.executor.execute_shell(f"pytest {shlex.quote(path)} -v --tb=short")
 
     def validate_code(self, code: str) -> tuple[bool, Optional[str]]:
         """Checks if the given code is valid Python syntax."""

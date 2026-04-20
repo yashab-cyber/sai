@@ -13,13 +13,15 @@ class SelfAdaptationEngine:
         self.logger = logging.getLogger("SAI.SelfAdaptation")
         
         # State tracking
-        self._consecutive_fails = 0
+        self._consecutive_same = 0
+        self._cumulative_fails = 0
         self._device_failures = 0
         self._last_action_key = None
 
     def reset_state(self):
         """Resets the tactical tracking state for a new objective."""
-        self._consecutive_fails = 0
+        self._consecutive_same = 0
+        self._cumulative_fails = 0
         self._device_failures = 0
         self._last_action_key = None
 
@@ -36,16 +38,32 @@ class SelfAdaptationEngine:
             Dict containing an 'adaptation_strategy' and associated details.
             If no adaptation is needed, strategy is 'CONTINUE'.
         """
-        # 1. Check for Stuck Tactical Loop
+        # 1. Check for Stuck Tactical Loop (identical consecutive + cumulative failure tracking)
         action_key = f"{tool_name}:{sorted(params.items()) if isinstance(params, dict) else params}"
+        
+        # Track identical consecutive actions
         if action_key == self._last_action_key:
-            self._consecutive_fails += 1
+            self._consecutive_same += 1
         else:
-            self._consecutive_fails = 0
+            self._consecutive_same = 0
         self._last_action_key = action_key
 
-        if self._consecutive_fails >= 2:
-            self.logger.warning("Detected a tactical loop. Consecutive fails: %d", self._consecutive_fails)
+        # Track cumulative failures regardless of action identity
+        is_action_failed = False
+        if isinstance(action_result, dict):
+            status = action_result.get("status", "")
+            if status in ("error", "failed", "queued"):
+                is_action_failed = True
+        
+        if is_action_failed:
+            self._cumulative_fails += 1
+        else:
+            # Successful action resets cumulative counter
+            self._cumulative_fails = 0
+
+        # Break on 2 identical consecutive OR 4 cumulative failures
+        if self._consecutive_same >= 2:
+            self.logger.warning("Detected a tactical loop. Identical consecutive actions: %d", self._consecutive_same)
             return {
                 "strategy": "LOOP_BREAK",
                 "message": (
@@ -53,6 +71,17 @@ class SelfAdaptationEngine:
                     "I'd recommend we reassess the approach."
                 ),
                 "thought": "I've detected a tactical loop, sir. The same action has failed consecutively. Awaiting new directive."
+            }
+
+        if self._cumulative_fails >= 4:
+            self.logger.warning("Cumulative failure threshold reached: %d consecutive failed actions.", self._cumulative_fails)
+            return {
+                "strategy": "LOOP_BREAK",
+                "message": (
+                    "Sir, I've encountered %d consecutive failures across different approaches. "
+                    "The current strategy doesn't appear to be working." % self._cumulative_fails
+                ),
+                "thought": "Multiple different approaches have all failed, sir. Recommending we reassess the objective."
             }
 
         # 2. Check for Device Failures (Android companion unreachable)

@@ -1,6 +1,7 @@
 import logging
 import json
 import os
+import threading
 from typing import Dict, Any
 import datetime
 
@@ -15,6 +16,7 @@ class MemoryStore:
     def __init__(self, storage_file: str = "workspace/rnd_memory.json"):
         self.storage_file = os.path.abspath(os.path.join(os.getcwd(), storage_file))
         os.makedirs(os.path.dirname(self.storage_file), exist_ok=True)
+        self._lock = threading.Lock()
         self.memory = self._load_memory()
 
     def _load_memory(self):
@@ -36,8 +38,9 @@ class MemoryStore:
             "insight": f"Experiment completed. Metrics: {validation.get('metrics')}",
             "timestamp": datetime.datetime.now().isoformat()
         }
-        self.memory.append(learning)
-        self.save_memory()
+        with self._lock:
+            self.memory.append(learning)
+            self._save_memory()
         logger.info(f"Saved learning for: {plan.get('goal')}")
 
     def save_memory(self):

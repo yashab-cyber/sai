@@ -60,7 +60,7 @@ class CommandRouter:
         Returns: execution_mode string, and a list of step execution lambdas or markers.
         """
         plugin = getattr(self.sai.device_manager, 'plugins', {}).get(device_type)
-        caps = plugin.get_capabilities() if plugin else []
+        caps = plugin.get_capabilities() if plugin and hasattr(plugin, 'get_capabilities') else []
         
         steps = []
         mode = "vision_hybrid"

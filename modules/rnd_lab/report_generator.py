@@ -37,7 +37,7 @@ class ReportGenerator:
             md += f"**Command:** `{result.get('command')}`\n"
             output = result.get('output', {})
             md += f"**Exit Code:** {output.get('exit_code')}\n"
-            md += f"**Execution Time:** {output.get('execution_time'):.2f}s\n"
+            md += f"**Execution Time:** {output.get('execution_time', 0) or 0:.2f}s\n"
             
             md += "#### stdout\n```\n"
             md += output.get('stdout', '') + "\n```\n"

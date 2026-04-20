@@ -28,7 +28,7 @@ class FileManager:
             if result["status"] == "success":
                 return result["stdout"].split("\n")
             return []
-        except:
+        except Exception:
             return []
 
     def safe_read(self, path: str) -> str:

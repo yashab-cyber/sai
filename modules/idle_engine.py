@@ -264,8 +264,9 @@ class IdleEngine:
         """Sleeps in small increments so the thread can be stopped or paused quickly."""
         elapsed = 0
         while elapsed < seconds and self._running and not self._paused:
-            time.sleep(min(5, seconds - elapsed))
-            elapsed += 5
+            sleep_time = min(5, seconds - elapsed)
+            time.sleep(sleep_time)
+            elapsed += sleep_time
 
     def _save_state_to_memory(self, state: dict):
         """Persists interrupted state to semantic memory for cross-session recall."""

@@ -12,7 +12,7 @@ CORS(app)
 # Suppress werkzeug per-request INFO logs (GET /logs/hud.png spam)
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
 # Allow CORS and provide a secret key for session/socket security
-app.config['SECRET_KEY'] = 'sai-ultra-secret'
+app.config['SECRET_KEY'] = os.environ.get('SAI_SECRET_KEY', 'sai-ultra-secret')
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # Shared state for persistence and initial sync
@@ -165,7 +165,10 @@ def get_latest_vision():
 
 @app.route('/api/voice/transcripts', methods=['GET'])
 def get_voice_transcripts():
-    limit = int(request.args.get("limit", 25))
+    try:
+        limit = int(request.args.get("limit", 25))
+    except (ValueError, TypeError):
+        limit = 25
     limit = max(1, min(limit, 100))
     return jsonify({
         "status": "success",

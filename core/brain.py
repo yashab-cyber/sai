@@ -114,7 +114,10 @@ class Brain:
         if "```json" in text:
             text = text.split("```json")[1].split("```")[0].strip()
         elif text.startswith("```"): # Handle cases where it's just triple backticks without 'json'
-             text = text.strip("`").strip()
+             text = text[3:]
+             if text.endswith("```"):
+                 text = text[:-3]
+             text = text.strip()
         return json.loads(text)
 
     def _call_ollama(self, system_prompt: str, user_query: str) -> Dict[str, Any]:

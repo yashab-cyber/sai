@@ -28,6 +28,12 @@ class EvolutionEngine:
         module_path = f"modules/{module_name}.py"
         backup_path = f"modules/{module_name}.py.bak"
 
+        # Safety Valve: Prevent empty code writes
+        if not new_code or not str(new_code).strip():
+            msg = f"Evolution rejected: Improvement code for {module_name} is empty."
+            self.logger.error(msg)
+            return {"status": "error", "message": msg}
+
         self.logger.info(f"[Start] Proposing improvement for {module_name}...")
 
         # 1. Validation
