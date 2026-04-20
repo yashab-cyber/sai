@@ -59,6 +59,22 @@ class IdleEngine:
         self._interrupted_state: Optional[Dict[str, Any]] = None
         self._action_in_progress = False  # True while an idle action is executing
 
+        # GUI callback for real-time idle log broadcasting
+        self._gui_callback = None
+
+    def set_gui_callback(self, callback):
+        """Set a callback function to broadcast idle events to the GUI."""
+        self._gui_callback = callback
+
+    def _broadcast(self, event_type: str, data: dict = None):
+        """Send an event to the GUI if a callback is set."""
+        if self._gui_callback:
+            try:
+                entry = {"type": event_type, "timestamp": time.time(), **(data or {})}
+                self._gui_callback(entry)
+            except Exception:
+                pass
+
     def start(self):
         """Starts the idle engine daemon thread."""
         if not self._enabled:
@@ -184,6 +200,7 @@ class IdleEngine:
                     # Random cooldown between actions
                     cooldown = random.randint(self._min_cooldown, self._max_cooldown)
                     self.logger.info("Next idle action in %d seconds.", cooldown)
+                    self._broadcast("next_cooldown", {"seconds": cooldown})
                     self._sleep_interruptible(cooldown)
                 else:
                     # SAI is busy — check again in 60 seconds
@@ -201,6 +218,7 @@ class IdleEngine:
 
         self.logger.info("SAI is idle — executing autonomous GitHub action...")
         self._action_in_progress = True
+        self._broadcast("action_start", {"message": "Executing autonomous GitHub action..."})
         try:
             result = self.sai.github_presence.run_idle_action()
             self._actions_executed += 1
@@ -221,6 +239,14 @@ class IdleEngine:
                 action, status, extra_msg, self._actions_executed
             )
 
+            self._broadcast("action_complete", {
+                "action": action,
+                "status": status,
+                "detail": extra_msg,
+                "total": self._actions_executed,
+                "result_summary": result.get("summary", result.get("reason", ""))[:200],
+            })
+
             # Publish event
             if hasattr(self.sai, 'event_bus'):
                 self.sai.event_bus.publish("idle_action_executed", {
@@ -232,6 +258,7 @@ class IdleEngine:
 
         except Exception as e:
             self.logger.error("Failed to execute idle action: %s", e)
+            self._broadcast("action_error", {"error": str(e)})
         finally:
             self._action_in_progress = False
 

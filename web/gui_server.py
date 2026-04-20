@@ -27,9 +27,19 @@ state = {
     "latency": "14ms"
 }
 voice_transcripts = []
+idle_logs = []  # Circular buffer of idle engine events
 
 # The SAI instance will be injected after initialization
 sai_instance = None
+
+
+def add_idle_log(entry: dict):
+    """Add an idle engine event to the log buffer and broadcast via SocketIO."""
+    entry.setdefault("timestamp", time.time())
+    idle_logs.append(entry)
+    if len(idle_logs) > 200:
+        del idle_logs[:-200]
+    socketio.emit('idle_log_update', entry, namespace='/')
 
 # Changed to serve the React app directly
 @app.route('/', defaults={'path': ''})
@@ -192,6 +202,86 @@ def get_devices():
         })
     return jsonify({"status": "success", "devices": items})
 
+
+@app.route('/api/idle/status', methods=['GET'])
+def get_idle_status():
+    """Returns the current state of the idle engine."""
+    sai = app.config.get('SAI_INSTANCE')
+    if not sai or not hasattr(sai, 'idle_engine'):
+        return jsonify({"status": "error", "message": "Idle engine not available"}), 500
+
+    ie = sai.idle_engine
+    return jsonify({
+        "status": "success",
+        "enabled": ie._enabled,
+        "running": ie._running,
+        "paused": ie._paused,
+        "actions_executed": ie._actions_executed,
+        "min_cooldown": ie._min_cooldown,
+        "max_cooldown": ie._max_cooldown,
+        "last_action_time": ie._last_action_time,
+        "action_in_progress": ie._action_in_progress,
+    })
+
+
+@app.route('/api/idle/logs', methods=['GET'])
+def get_idle_logs():
+    """Returns recent idle engine log entries."""
+    try:
+        limit = int(request.args.get("limit", 50))
+    except (ValueError, TypeError):
+        limit = 50
+    limit = max(1, min(limit, 200))
+    return jsonify({
+        "status": "success",
+        "items": idle_logs[-limit:]
+    })
+
+
+@app.route('/api/settings', methods=['GET'])
+def get_settings():
+    """Returns current SAI settings."""
+    sai = app.config.get('SAI_INSTANCE')
+    if not sai:
+        return jsonify({"status": "error"}), 500
+
+    settings = {
+        "idle_enabled": getattr(sai.idle_engine, '_enabled', False) if hasattr(sai, 'idle_engine') else False,
+        "idle_min_cooldown": getattr(sai.idle_engine, '_min_cooldown', 120) if hasattr(sai, 'idle_engine') else 120,
+        "idle_max_cooldown": getattr(sai.idle_engine, '_max_cooldown', 300) if hasattr(sai, 'idle_engine') else 300,
+        "email_enabled": hasattr(sai, 'email_manager') and sai.email_manager is not None,
+        "voice_enabled": hasattr(sai, 'voice') and sai.voice is not None,
+        "brain_provider": getattr(sai.brain, 'provider', 'unknown') if hasattr(sai, 'brain') else 'unknown',
+        "brain_model": getattr(sai.brain, 'model_name', 'unknown') if hasattr(sai, 'brain') else 'unknown',
+        "safety_level": getattr(sai.safety, 'level', 'STRICT') if hasattr(sai, 'safety') else 'STRICT',
+    }
+    return jsonify({"status": "success", "settings": settings})
+
+
+@app.route('/api/settings', methods=['POST'])
+def update_settings():
+    """Updates SAI settings at runtime."""
+    sai = app.config.get('SAI_INSTANCE')
+    if not sai:
+        return jsonify({"status": "error"}), 500
+
+    data = request.json or {}
+    updated = []
+
+    if hasattr(sai, 'idle_engine'):
+        ie = sai.idle_engine
+        if "idle_enabled" in data:
+            ie._enabled = bool(data["idle_enabled"])
+            updated.append("idle_enabled")
+        if "idle_min_cooldown" in data:
+            ie._min_cooldown = max(30, int(data["idle_min_cooldown"]))
+            updated.append("idle_min_cooldown")
+        if "idle_max_cooldown" in data:
+            ie._max_cooldown = max(ie._min_cooldown + 10, int(data["idle_max_cooldown"]))
+            updated.append("idle_max_cooldown")
+
+    return jsonify({"status": "success", "updated": updated})
+
 @socketio.on('agent_response', namespace='/agent')
 
 def handle_agent_response(data):
@@ -306,6 +396,15 @@ class GUIManager:
             self.sai.device_manager.start_heartbeat()
 
         self.logger.info(f"SAI COCKPIT ONLINE at http://localhost:{self.port} and http://{get_local_ip()}:{self.port}")
+
+        # Hook Idle Engine to broadcast events to GUI
+        if hasattr(self.sai, 'idle_engine'):
+            self.sai.idle_engine.set_gui_callback(add_idle_log)
+
+        # Hook Action Pipeline to broadcast phase updates to GUI
+        if hasattr(self.sai, 'action_pipeline'):
+            self.sai.action_pipeline.set_gui_callback(add_idle_log)
+
         return {"status": "success", "url": f"http://{get_local_ip()}:{self.port}"}
 
     def _telemetry_loop(self):

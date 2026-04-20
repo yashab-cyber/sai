@@ -59,8 +59,25 @@ class ActionPipeline:
         self.logger = logging.getLogger("SAI.ActionPipeline")
         self.github_user = os.getenv("SAI_GITHUB_USERNAME", "")
 
+        # GUI callback for real-time pipeline phase broadcasts
+        self._gui_callback = None
+
         # DataCollector for Phase 2 (Research)
         self.data_collector = DataCollector()
+
+    def set_gui_callback(self, callback):
+        """Set a callback to broadcast pipeline events to the GUI."""
+        self._gui_callback = callback
+
+    def _broadcast(self, event_type: str, data: dict = None):
+        """Send a pipeline event to the GUI."""
+        if self._gui_callback:
+            try:
+                import time as _t
+                entry = {"type": event_type, "timestamp": _t.time(), **(data or {})}
+                self._gui_callback(entry)
+            except Exception:
+                pass
 
     def requires_pipeline(self, action_name: str) -> bool:
         """Returns True if the action should go through the full pipeline."""
@@ -79,6 +96,7 @@ class ActionPipeline:
             Dict with status, phase results, and final outcome.
         """
         self.logger.info("═══ PIPELINE START: %s ═══", action_name)
+        self._broadcast("pipeline_start", {"action": action_name})
         pipeline_result = {
             "action": action_name,
             "started_at": datetime.now().isoformat(),
@@ -87,14 +105,17 @@ class ActionPipeline:
 
         try:
             # ── Phase 1: PLAN ──
+            self._broadcast("phase", {"phase": "plan", "action": action_name})
             plan = self._phase_plan(action_name, action_context)
             pipeline_result["phases"]["plan"] = plan
             if plan.get("status") == "error":
                 pipeline_result["status"] = "error"
                 pipeline_result["message"] = "Planning phase failed"
+                self._broadcast("phase_error", {"phase": "plan", "error": "Planning failed"})
                 return pipeline_result
 
             # ── Phase 2: RESEARCH ──
+            self._broadcast("phase", {"phase": "research", "queries": len(plan.get("search_queries", []))})
             research = self._phase_research(plan)
             pipeline_result["phases"]["research"] = {
                 "data_points": len(research),
@@ -102,6 +123,7 @@ class ActionPipeline:
             }
 
             # ── Phase 3: IMPLEMENT ──
+            self._broadcast("phase", {"phase": "implement", "action": action_name})
             implementation = self._phase_implement(
                 action_name, action_context, plan, research
             )
@@ -109,9 +131,17 @@ class ActionPipeline:
             if implementation.get("status") == "error":
                 pipeline_result["status"] = "error"
                 pipeline_result["message"] = "Implementation phase failed"
+                self._broadcast("phase_error", {"phase": "implement", "error": "Implementation failed"})
                 return pipeline_result
 
+            self._broadcast("phase_complete", {
+                "phase": "implement",
+                "files": len(implementation.get("files", [])),
+                "project": implementation.get("project_name", ""),
+            })
+
             # ── Phase 4: TEST ──
+            self._broadcast("phase", {"phase": "test", "max_rounds": self.MAX_TEST_ROUNDS})
             test_result = self._phase_test(action_name, implementation)
             pipeline_result["phases"]["test"] = test_result
 
@@ -125,9 +155,20 @@ class ActionPipeline:
                     f"All {self.MAX_TEST_ROUNDS} test rounds failed. "
                     "Work discarded to maintain quality."
                 )
+                self._broadcast("quality_gate_failed", {
+                    "rounds": test_result.get("rounds", 0),
+                    "action": action_name,
+                })
                 return pipeline_result
 
+            self._broadcast("phase_complete", {
+                "phase": "test",
+                "rounds": test_result.get("rounds", 0),
+                "reason": test_result.get("reason", "pass"),
+            })
+
             # ── Phase 5: PUBLISH ──
+            self._broadcast("phase", {"phase": "publish", "action": action_name})
             publish = self._phase_publish(action_name, action_context, implementation)
             pipeline_result["phases"]["publish"] = publish
             pipeline_result["status"] = publish.get("status", "error")
@@ -136,12 +177,17 @@ class ActionPipeline:
             self.logger.error("Pipeline failed for %s: %s", action_name, e)
             pipeline_result["status"] = "error"
             pipeline_result["message"] = str(e)
+            self._broadcast("pipeline_error", {"action": action_name, "error": str(e)})
 
         pipeline_result["finished_at"] = datetime.now().isoformat()
         self.logger.info(
             "═══ PIPELINE END: %s [%s] ═══",
             action_name, pipeline_result.get("status", "unknown"),
         )
+        self._broadcast("pipeline_end", {
+            "action": action_name,
+            "status": pipeline_result.get("status", "unknown"),
+        })
 
         # Persist pipeline result to semantic memory
         self._save_to_memory(action_name, pipeline_result)

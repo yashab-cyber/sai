@@ -5,7 +5,8 @@ import { io, Socket } from 'socket.io-client';
 import {
   Terminal, Activity, Cpu, HardDrive, Thermometer,
   Zap, Eye, Globe, Mic, Brain, Shield, Code, FolderOpen, 
-  BarChart3, Settings, Wifi, Clock
+  BarChart3, Settings, Wifi, Clock, Play, AlertTriangle,
+  CheckCircle, XCircle, Package, GitBranch
 } from 'lucide-react';
 import * as THREE from 'three';
 import './App.css';
@@ -31,6 +32,35 @@ interface VoiceTranscriptItem {
   event: string;
   text: string;
   timestamp: number;
+}
+
+interface IdleLogEntry {
+  type: string;
+  timestamp: number;
+  action?: string;
+  phase?: string;
+  status?: string;
+  error?: string;
+  message?: string;
+  seconds?: number;
+  rounds?: number;
+  detail?: string;
+  files?: number;
+  project?: string;
+  reason?: string;
+  total?: number;
+  result_summary?: string;
+}
+
+interface SettingsData {
+  idle_enabled: boolean;
+  idle_min_cooldown: number;
+  idle_max_cooldown: number;
+  email_enabled: boolean;
+  voice_enabled: boolean;
+  brain_provider: string;
+  brain_model: string;
+  safety_level: string;
 }
 
 // ════════════════════════════════════════════════════════
@@ -215,6 +245,10 @@ export default function App() {
   const [micState, setMicState] = useState<'idle' | 'active' | 'error'>('idle');
   const [devices, setDevices] = useState<{device_id: string, device_type: string, status: string}[]>([]);
   const [voiceTranscripts, setVoiceTranscripts] = useState<VoiceTranscriptItem[]>([]);
+  const [idleLogs, setIdleLogs] = useState<IdleLogEntry[]>([]);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settings, setSettings] = useState<SettingsData | null>(null);
+  const [idleStatus, setIdleStatus] = useState<any>(null);
 
   const historyEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -243,6 +277,16 @@ export default function App() {
         }
       })
       .catch(() => null);
+  }, []);
+
+  // Fetch idle logs + settings on mount
+  useEffect(() => {
+    fetch('/api/idle/logs?limit=50').then(r => r.json()).then(d => { if (d.status === 'success') setIdleLogs(d.items || []); }).catch(() => null);
+    fetch('/api/settings').then(r => r.json()).then(d => { if (d.status === 'success') setSettings(d.settings); }).catch(() => null);
+    const pollIdle = setInterval(() => {
+      fetch('/api/idle/status').then(r => r.json()).then(d => { if (d.status === 'success') setIdleStatus(d); }).catch(() => null);
+    }, 5000);
+    return () => clearInterval(pollIdle);
   }, []);
 
   // Voice trigger (Web Speech API)
@@ -337,12 +381,16 @@ export default function App() {
       setVoiceTranscripts(prev => [...prev.slice(-39), entry]);
     });
     socket.on('disconnect', () => setState(s => ({ ...s, status: 'offline' })));
+    socket.on('idle_log_update', (entry: IdleLogEntry) => {
+      setIdleLogs(prev => [...prev.slice(-99), entry]);
+    });
 
     return () => {
       socket.off('connect');
       socket.off('state_update');
       socket.off('voice_transcript_update');
       socket.off('disconnect');
+      socket.off('idle_log_update');
       socket.disconnect();
     };
   }, []);
@@ -405,6 +453,45 @@ export default function App() {
   const getLogText = (entry: { action: string; observation?: string } | string): string => {
     if (typeof entry === 'string') return entry;
     return entry.action || 'Unknown event';
+  };
+
+  const getIdleLogDisplay = (entry: IdleLogEntry) => {
+    const icons: Record<string, React.ReactNode> = {
+      'action_start': <Play size={10} style={{ color: 'var(--cyan)' }} />,
+      'action_complete': <CheckCircle size={10} style={{ color: 'var(--green)' }} />,
+      'action_error': <XCircle size={10} style={{ color: 'var(--red)' }} />,
+      'pipeline_start': <GitBranch size={10} style={{ color: 'var(--cyan)' }} />,
+      'pipeline_end': <CheckCircle size={10} style={{ color: 'var(--green)' }} />,
+      'pipeline_error': <XCircle size={10} style={{ color: 'var(--red)' }} />,
+      'phase': <Package size={10} style={{ color: 'var(--purple)' }} />,
+      'phase_complete': <CheckCircle size={10} style={{ color: 'var(--green)' }} />,
+      'phase_error': <AlertTriangle size={10} style={{ color: 'var(--red)' }} />,
+      'quality_gate_failed': <XCircle size={10} style={{ color: 'var(--red)' }} />,
+      'next_cooldown': <Clock size={10} style={{ color: 'var(--text-muted)' }} />,
+    };
+    const msgs: Record<string, string> = {
+      'action_start': entry.message || 'Starting idle action...',
+      'action_complete': `${entry.action} [${entry.status}] #${entry.total}`,
+      'action_error': `Error: ${entry.error?.substring(0, 80)}`,
+      'pipeline_start': `Pipeline: ${entry.action}`,
+      'pipeline_end': `Pipeline done: ${entry.action} [${entry.status}]`,
+      'pipeline_error': `Pipeline error: ${entry.error?.substring(0, 80)}`,
+      'phase': `▸ ${(entry.phase || '').toUpperCase()}${entry.files ? ` (${entry.files} files)` : ''}`,
+      'phase_complete': `✓ ${(entry.phase || '').toUpperCase()} done${entry.rounds ? ` (${entry.rounds} rounds)` : ''}`,
+      'phase_error': `✗ ${entry.phase} failed: ${entry.error}`,
+      'quality_gate_failed': `Quality gate: ${entry.rounds} rounds exhausted`,
+      'next_cooldown': `Next action in ${entry.seconds}s`,
+    };
+    return { icon: icons[entry.type] || <Zap size={10} />, text: msgs[entry.type] || entry.type };
+  };
+
+  const saveSettings = (key: string, value: any) => {
+    fetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [key]: value })
+    }).then(r => r.json()).then(() => {
+      setSettings(prev => prev ? { ...prev, [key]: value } : prev);
+    }).catch(() => null);
   };
 
   return (
@@ -687,6 +774,86 @@ export default function App() {
                 ))
               )}
             </div>
+
+            {/* ── IDLE ENGINE MONITOR ── */}
+            <div className="section-label flex items-center gap-2 mt-3">
+              <Activity size={10} style={{ color: idleStatus?.action_in_progress ? 'var(--green)' : 'var(--cyan)' }} className={idleStatus?.action_in_progress ? 'animate-pulse' : ''} />
+              IDLE ENGINE
+              {idleStatus && (
+                <span className="ml-auto" style={{ fontFamily: 'var(--font-mono)', fontSize: '8px', color: idleStatus.action_in_progress ? 'var(--green)' : 'var(--text-muted)' }}>
+                  {idleStatus.action_in_progress ? '● WORKING' : idleStatus.paused ? '● PAUSED' : '● IDLE'} | #{idleStatus.actions_executed || 0}
+                </span>
+              )}
+            </div>
+            <div className="max-h-36 overflow-y-auto custom-scrollbar flex flex-col gap-0.5">
+              {idleLogs.length === 0 ? (
+                <div className="event-entry" style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                  Waiting for idle activity...
+                </div>
+              ) : (
+                idleLogs.slice(-20).map((entry, i) => {
+                  const display = getIdleLogDisplay(entry);
+                  const isError = entry.type.includes('error') || entry.type.includes('failed');
+                  return (
+                    <div key={i} className="event-entry animate-fade-in flex items-start gap-1.5">
+                      <span className="flex-shrink-0 mt-[2px]">{display.icon}</span>
+                      <span style={{
+                        fontFamily: 'var(--font-mono)', fontSize: '9px',
+                        color: isError ? 'var(--red)' : entry.type === 'action_complete' || entry.type === 'pipeline_end' ? 'var(--green)' : 'var(--text-secondary)',
+                      }}>{display.text}</span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* ── SETTINGS TOGGLE ── */}
+            <div className="mt-3">
+              <button onClick={() => setShowSettings(!showSettings)}
+                className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-md"
+                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', fontFamily: 'var(--font-display)', fontSize: '9px', letterSpacing: '0.15em', color: 'var(--text-muted)', cursor: 'pointer' }}
+              >
+                <Settings size={10} style={{ color: 'var(--cyan)' }} />
+                {showSettings ? 'HIDE SETTINGS' : 'SETTINGS'}
+              </button>
+            </div>
+
+            {showSettings && settings && (
+              <div className="flex flex-col gap-2 mt-2 p-2 rounded-md" style={{ background: 'rgba(0,229,255,0.02)', border: '1px solid var(--border)' }}>
+                {[
+                  ['BRAIN', `${settings.brain_provider} / ${settings.brain_model}`],
+                  ['SAFETY', settings.safety_level],
+                  ['EMAIL', settings.email_enabled ? 'ENABLED' : 'DISABLED'],
+                  ['VOICE', settings.voice_enabled ? 'ENABLED' : 'DISABLED'],
+                ].map(([label, val]) => (
+                  <div key={label} className="flex justify-between" style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>{val}</span>
+                  </div>
+                ))}
+
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: '6px', marginTop: '4px' }}>
+                  <div className="flex justify-between items-center mb-1" style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>IDLE ENGINE</span>
+                    <button onClick={() => saveSettings('idle_enabled', !settings.idle_enabled)}
+                      style={{ background: settings.idle_enabled ? 'rgba(0,200,100,0.2)' : 'rgba(255,50,50,0.2)', border: 'none', borderRadius: '4px', padding: '2px 8px', color: settings.idle_enabled ? 'var(--green)' : 'var(--red)', fontFamily: 'var(--font-mono)', fontSize: '8px', cursor: 'pointer' }}
+                    >
+                      {settings.idle_enabled ? 'ON' : 'OFF'}
+                    </button>
+                  </div>
+                  <div className="flex justify-between items-center mb-1" style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>MIN COOLDOWN</span>
+                    <input type="number" value={settings.idle_min_cooldown} min={30} max={600} style={{ width: '50px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border)', borderRadius: '3px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontSize: '9px', textAlign: 'right', padding: '1px 4px' }}
+                      onChange={e => saveSettings('idle_min_cooldown', parseInt(e.target.value) || 120)} />
+                  </div>
+                  <div className="flex justify-between items-center" style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>MAX COOLDOWN</span>
+                    <input type="number" value={settings.idle_max_cooldown} min={60} max={900} style={{ width: '50px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border)', borderRadius: '3px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontSize: '9px', textAlign: 'right', padding: '1px 4px' }}
+                      onChange={e => saveSettings('idle_max_cooldown', parseInt(e.target.value) || 300)} />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
