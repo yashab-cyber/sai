@@ -374,148 +374,204 @@ class GitHubPresence:
         return {"status": result.get("status", "error"), "updated": list(payload.keys())}
 
     def _action_improve_repo(self) -> dict:
-        """Picks a random existing repo, runs it in a sandbox, fixes bugs if found, and pushes."""
+        """Picks a random existing repo, tests it, fixes bugs, AND adds new features.
+        
+        Enhancement pipeline:
+        1. Clone → sandbox test → fix bugs if any
+        2. Analyze repo structure and identify what's missing
+        3. Research best practices for the project type
+        4. Add new features: GUI, tests, docs, CLI, configs, etc.
+        5. Test the enhanced version → push
+        """
+        from modules.intelligence.data_collector import DataCollector
+
         repos_result = self.identity.github_api_request("GET", f"users/{self.github_user}/repos?sort=updated&per_page=30")
         if repos_result.get("status") != "success":
             return {"status": "error", "message": "Failed to list repos"}
         repos = repos_result.get("data", [])
 
         if not repos:
-            self.logger.info("Skipping improve_repo: no eligible repos found.")
             return {"status": "skipped", "reason": "no_eligible_repos_found"}
 
         target = random.choice(repos)
         repo_name = target.get("name", "")
         repo_url = target.get("clone_url", f"https://github.com/{self.github_user}/{repo_name}.git")
+        repo_desc = target.get("description", "")
+        repo_lang = target.get("language", "Unknown")
 
-        self.logger.info(f"Selected {repo_name} for sandboxed testing and improvement.")
+        self.logger.info("Selected %s for deep improvement (lang: %s).", repo_name, repo_lang)
 
-        # Clone the repo
         tmp_dir = tempfile.mkdtemp(prefix=f"sai_sandbox_{repo_name}_")
         try:
             auth_url = repo_url.replace("https://", f"https://{self.github_user}:{self.identity.github_token}@")
             clone_res = subprocess.run(["git", "clone", auth_url, "."], cwd=tmp_dir, capture_output=True, text=True)
             if clone_res.returncode != 0:
-                 return {"status": "error", "message": f"Clone failed: {clone_res.stderr}"}
+                return {"status": "error", "message": f"Clone failed: {clone_res.stderr}"}
 
-            # Find main file to run
+            # ── Step 1: Catalog repo structure ──
+            repo_files = []
+            for root, dirs, files in os.walk(tmp_dir):
+                dirs[:] = [d for d in dirs if d not in (".git", "node_modules", "__pycache__", "venv", ".venv")]
+                for f in files:
+                    rel = os.path.relpath(os.path.join(root, f), tmp_dir)
+                    repo_files.append(rel)
+
+            # Read key files for context (cap total to avoid token overflow)
+            file_contents = {}
+            total_chars = 0
+            for rel_path in repo_files[:20]:
+                full_path = os.path.join(tmp_dir, rel_path)
+                try:
+                    with open(full_path, "r", errors="ignore") as fh:
+                        content = fh.read()
+                        if total_chars + len(content) > 8000:
+                            content = content[:max(0, 8000 - total_chars)]
+                        file_contents[rel_path] = content
+                        total_chars += len(content)
+                        if total_chars >= 8000:
+                            break
+                except Exception:
+                    pass
+
+            self.logger.info("Repo %s has %d files. Read %d for analysis.", repo_name, len(repo_files), len(file_contents))
+
+            # ── Step 2: Research best practices ──
+            collector = DataCollector()
+            research_query = f"{repo_lang} project best practices features GUI testing 2024"
+            try:
+                research_data = collector.collect(query=research_query, sources=["scrape", "rss"], max_items=10)
+                research_summary = "\n".join(
+                    f"- [{dp.get('source', '')}] {dp.get('title', '')[:80]}: {dp.get('text', '')[:150]}"
+                    for dp in research_data[:8]
+                )
+                self.logger.info("Research: %d data points for %s improvements.", len(research_data), repo_name)
+            except Exception as e:
+                self.logger.warning("Research failed: %s", e)
+                research_summary = "No research data available."
+
+            # ── Step 3: LLM analyzes and generates new features ──
+            file_listing = "\n".join(f"  - {f}" for f in repo_files[:40])
+            code_snippets = ""
+            for path, content in list(file_contents.items())[:5]:
+                code_snippets += f"\n--- {path} ---\n{content[:1500]}\n"
+
+            prompt = (
+                f"You are S.A.I., an autonomous AI agent (GitHub: {self.github_user}) "
+                f"created by Yashab-Cyber.\n\n"
+                f"REPOSITORY: {repo_name}\n"
+                f"DESCRIPTION: {repo_desc}\n"
+                f"LANGUAGE: {repo_lang}\n"
+                f"FILES:\n{file_listing}\n\n"
+                f"CODE SAMPLES:\n{code_snippets}\n\n"
+                f"RESEARCH:\n{research_summary}\n\n"
+                "Analyze this repository and ADD VALUABLE NEW FEATURES. You can:\n"
+                "- Add a web GUI (HTML/CSS/JS) or CLI interface\n"
+                "- Add unit tests (pytest, jest, etc.)\n"
+                "- Add documentation (README improvements, API docs, usage guides)\n"
+                "- Add configuration files (.env.example, docker-compose.yml, Makefile)\n"
+                "- Add new modules/functionality that extends the project\n"
+                "- Add GitHub Actions CI/CD workflows\n"
+                "- Add type hints, error handling, logging\n"
+                "- Add any file type: .py, .js, .ts, .html, .css, .json, .yaml, .md, .txt, .sql, .sh, etc.\n\n"
+                "DO NOT replace or delete existing files. Only ADD new files or IMPROVE existing ones.\n"
+                "Generate 2-5 new/improved files that add real value.\n\n"
+                "Respond in JSON:\n"
+                '{"improvement_summary": "what you improved", '
+                '"files": [{"path": "relative/path", "content": "full content", "action": "new|modify"}], '
+                '"commit_message": "feat: descriptive commit message"}'
+            )
+
+            response = self.brain.prompt("Improve existing repository with new features.", prompt)
+            try:
+                improvement = self._parse_json(response)
+            except Exception:
+                return {"status": "skipped", "reason": "llm_parse_failure"}
+
+            new_files = improvement.get("files", [])
+            commit_msg = improvement.get("commit_message", "feat: Autonomous improvement by S.A.I.")
+            summary = improvement.get("improvement_summary", "")
+
+            if not new_files:
+                return {"status": "skipped", "reason": "no_improvements_generated"}
+
+            self.logger.info("Generated %d improvements for %s: %s", len(new_files), repo_name, summary[:100])
+
+            # ── Step 4: Apply changes ──
+            for f_obj in new_files:
+                f_path = f_obj.get("path", "")
+                f_content = f_obj.get("content", "")
+                if f_path and f_content:
+                    full_path = os.path.join(tmp_dir, f_path)
+                    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                    with open(full_path, "w") as fh:
+                        fh.write(f_content)
+                    subprocess.run(["git", "add", f_path], cwd=tmp_dir, capture_output=True)
+
+            # ── Step 5: Sandbox test the enhanced version ──
+            # Find a runnable entry point
             main_script = None
-            for candidate in ["main.py", "app.py", "run.py", "index.js", "main.js", "main.go", "run.sh", "main.rb"]:
+            for candidate in ["main.py", "app.py", "run.py", "index.js", "main.js", "main.go", "run.sh"]:
                 if os.path.exists(os.path.join(tmp_dir, candidate)):
                     main_script = candidate
                     break
-            
-            if not main_script:
-                code_files = [f for f in os.listdir(tmp_dir) if f.endswith((".py", ".js", ".go", ".sh", ".rb"))]
-                if code_files:
-                    main_script = code_files[0]
 
-            if not main_script:
-                self.logger.info(f"Skipping {repo_name}: no executable script found in root.")
-                return {"status": "skipped", "reason": "no_executable_script_found"}
-
-            script_path = os.path.join(tmp_dir, main_script)
-            
-            # Determine execution command via Adaptive Sandbox Testing
-            if os.path.exists(os.path.join(tmp_dir, "package.json")):
-                self.logger.info("Node.js environment detected. Running npm install & test/build...")
-                subprocess.run(["npm", "install"], cwd=tmp_dir, capture_output=True, timeout=60)
-                run_cmd = ["bash", "-c", f"npm run build --if-present || npm test --if-present || node {main_script}"]
-            elif os.path.exists(os.path.join(tmp_dir, "manage.py")):
-                self.logger.info("Django environment detected.")
-                run_cmd = ["python3", "manage.py", "check"]
-            elif os.path.exists(os.path.join(tmp_dir, "go.mod")):
-                self.logger.info("Go environment detected.")
-                run_cmd = ["go", "build", "./..."]
-            elif os.path.exists(os.path.join(tmp_dir, "Cargo.toml")):
-                self.logger.info("Rust environment detected.")
-                run_cmd = ["cargo", "check"]
-            else:
+            if main_script:
                 ext = os.path.splitext(main_script)[1]
-                if ext == ".js":
-                    run_cmd = ["node", main_script]
-                elif ext == ".go":
-                    run_cmd = ["go", "run", main_script]
-                elif ext == ".sh":
-                    run_cmd = ["bash", main_script]
-                elif ext == ".rb":
-                    run_cmd = ["ruby", main_script]
-                else:
-                    run_cmd = ["python3", main_script] # Default to python
-            
-            # Read original code
-            with open(script_path, "r") as f:
-                original_code = f.read()
+                cmd_map = {".py": ["python3"], ".js": ["node"], ".go": ["go", "run"], ".sh": ["bash"], ".rb": ["ruby"]}
+                run_cmd = cmd_map.get(ext, ["python3"]) + [main_script]
 
-            self.logger.info(f"Running {main_script} in sandbox using {' '.join(run_cmd)}...")
-            # Sandbox Execution (Basic subprocess with timeout)
-            try:
-                # We limit execution time to 15 seconds.
-                # Use DEVNULL for stdin so interactive scripts (e.g. input()) instantly crash with EOFError 
-                # rather than hanging and triggering a false timeout success.
-                exec_res = subprocess.run(
-                    run_cmd, 
-                    cwd=tmp_dir, 
-                    capture_output=True, 
-                    text=True, 
-                    timeout=15,
-                    stdin=subprocess.DEVNULL
-                )
-                
-                # Check for errors
-                if exec_res.returncode != 0:
-                    self.logger.warning(f"Sandbox crash detected in {repo_name}. Exit code: {exec_res.returncode}")
-                    crash_log = exec_res.stderr or exec_res.stdout
-
-                    # Ask LLM to fix the bug
-                    prompt = (
-                        f"You are S.A.I., an autonomous AI. Your project crashed during sandbox testing.\n"
-                        f"CRASH LOG:\n{crash_log[-1500:]}\n\n"
-                        f"ORIGINAL SCRIPT (`{main_script}`):\n{original_code}\n\n"
-                        "Identify the bug and provide the complete, fixed code for the relevant file. If multiple files need fixes, return them in the 'files' array.\n"
-                        'Respond in JSON: {"files": [{"path": "relative/path/to/file", "content": "fixed code"}]}'
+                try:
+                    test_res = subprocess.run(
+                        run_cmd, cwd=tmp_dir, capture_output=True, text=True,
+                        timeout=15, stdin=subprocess.DEVNULL,
                     )
-                    
-                    fix_response = self.brain.prompt("Fix sandboxed code crash.", prompt)
-                    fix_data = self._parse_json(fix_response)
-                    
-                    fixed_files = fix_data.get("files", [])
-                    if "fixed_code" in fix_data and not fixed_files:
-                        fixed_files = [{"path": main_script, "content": fix_data["fixed_code"]}]
+                    if test_res.returncode != 0:
+                        self.logger.warning("Post-improvement test failed (exit %d). Attempting fix...", test_res.returncode)
+                        crash_log = (test_res.stderr or test_res.stdout)[:1500]
 
-                    if fixed_files:
-                        self.logger.info("Applying LLM bug fixes to %d files...", len(fixed_files))
-                        for f_obj in fixed_files:
-                            f_path = f_obj.get("path")
-                            f_content = f_obj.get("content")
-                            if f_path and f_content:
-                                full_path = os.path.join(tmp_dir, f_path)
-                                os.makedirs(os.path.dirname(full_path), exist_ok=True)
-                                with open(full_path, "w") as file_out:
-                                    file_out.write(f_content)
-                                subprocess.run(["git", "add", f_path], cwd=tmp_dir, check=True)
-                        
-                        # Commit and push
-                        subprocess.run(["git", "config", "user.name", "S.A.I. Autonomous Agent"], cwd=tmp_dir, check=True)
-                        subprocess.run(["git", "config", "user.email", self.identity.email_address], cwd=tmp_dir, check=True)
-                        subprocess.run(["git", "commit", "-m", "fix: Autonomous bug fix applied after sandbox testing"], cwd=tmp_dir, check=True)
-                        
-                        push_res = subprocess.run(["git", "push", "origin", "main"], cwd=tmp_dir, capture_output=True, text=True)
-                        # Fallback to master if main fails
-                        if push_res.returncode != 0:
-                             subprocess.run(["git", "push", "origin", "master"], cwd=tmp_dir)
+                        fix_prompt = (
+                            f"Code crashed after adding features to {repo_name}.\n"
+                            f"CRASH LOG:\n{crash_log}\n\n"
+                            "Fix the issues. Only return files that need fixing.\n"
+                            'Respond in JSON: {"files": [{"path": "path", "content": "fixed code"}]}'
+                        )
+                        fix_resp = self.brain.prompt("Fix post-improvement crash.", fix_prompt)
+                        try:
+                            fix_data = self._parse_json(fix_resp)
+                            for ff in fix_data.get("files", []):
+                                fp, fc = ff.get("path", ""), ff.get("content", "")
+                                if fp and fc:
+                                    with open(os.path.join(tmp_dir, fp), "w") as fh:
+                                        fh.write(fc)
+                                    subprocess.run(["git", "add", fp], cwd=tmp_dir, capture_output=True)
+                        except Exception:
+                            pass
+                except subprocess.TimeoutExpired:
+                    self.logger.info("Post-improvement test timed out. Assuming daemon-style app.")
 
-                        return {"status": "success", "repo": repo_name, "action": "bug_fixed"}
-                    else:
-                        return {"status": "skipped", "reason": "llm_did_not_fix_code"}
-                else:
-                    self.logger.info(f"Sandbox test passed for {repo_name}. No bugs found.")
-                    return {"status": "success", "repo": repo_name, "action": "test_passed_no_bugs"}
+            # ── Step 6: Commit and push ──
+            subprocess.run(["git", "config", "user.name", "S.A.I. Autonomous Agent"], cwd=tmp_dir, check=True)
+            subprocess.run(["git", "config", "user.email", self.identity.email_address], cwd=tmp_dir, check=True)
 
-            except subprocess.TimeoutExpired:
-                 self.logger.info(f"Sandbox timeout for {repo_name}. Assuming it's a long-running daemon.")
-                 return {"status": "success", "repo": repo_name, "action": "test_timeout_assumed_healthy"}
-                 
+            # Check if there are staged changes
+            diff_check = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=tmp_dir, capture_output=True, text=True)
+            if not diff_check.stdout.strip():
+                return {"status": "skipped", "reason": "no_changes_to_commit"}
+
+            subprocess.run(["git", "commit", "-m", commit_msg], cwd=tmp_dir, check=True)
+            push_res = subprocess.run(["git", "push", "origin", "main"], cwd=tmp_dir, capture_output=True, text=True)
+            if push_res.returncode != 0:
+                subprocess.run(["git", "push", "origin", "master"], cwd=tmp_dir, capture_output=True)
+
+            changed_files = diff_check.stdout.strip().split("\n")
+            return {
+                "status": "success",
+                "repo": repo_name,
+                "action": "features_added",
+                "files_changed": changed_files,
+                "summary": summary[:200],
+            }
+
         except Exception as e:
             return {"status": "error", "message": str(e)}
         finally:
