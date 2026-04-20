@@ -44,7 +44,7 @@ class GitHubPresence:
         {"name": "enable_discussions", "weight": 3},
     ]
 
-    def __init__(self, brain, identity, memory, config: dict = None):
+    def __init__(self, brain, identity, memory, config: dict = None, pipeline=None):
         self.brain = brain
         self.identity = identity
         self.memory = memory
@@ -54,6 +54,9 @@ class GitHubPresence:
         self.action_history: List[Dict[str, Any]] = []
         self._daily_action_count = 0
         self._last_reset_date = datetime.now().date()
+
+        # ── Action Pipeline (Plan → Research → Implement → Test → Publish) ──
+        self.pipeline = pipeline
 
         # ── Pending Work Queue (for pause/resume) ──
         self._pending_work: Dict[str, Any] = {}
@@ -118,12 +121,41 @@ class GitHubPresence:
 
         try:
             method = getattr(self, f"_action_{action_name}", None)
-            if method:
-                result = method()
+            if not method:
+                return {"status": "error", "message": f"No handler: {action_name}"}
+
+            # ── Route through pipeline if available ──
+            if self.pipeline and self.pipeline.requires_pipeline(action_name):
+                self.logger.info("Routing '%s' through Action Pipeline...", action_name)
+                # Build action context from the action method's planning phase
+                action_context = {
+                    "action": action_name,
+                    "github_user": self.github_user,
+                    "recent_context": self._get_recent_context(),
+                }
+                pipeline_result = self.pipeline.execute(action_name, action_context)
+
+                # If pipeline succeeded, do the actual publish via the action handler
+                if pipeline_result.get("status") == "success":
+                    publish_data = pipeline_result.get("phases", {}).get("publish", {})
+                    impl = publish_data.get("implementation", {})
+                    if impl:
+                        # Inject validated implementation into a publish-only action
+                        result = self._publish_validated(action_name, impl)
+                    else:
+                        result = method()
+                else:
+                    result = pipeline_result
+
                 result_status = result.get("status", "unknown") if isinstance(result, dict) else "unknown"
                 self._record_action(action_name, result)
-                return {"status": result_status, "action": action_name, "result": result}
-            return {"status": "error", "message": f"No handler: {action_name}"}
+                return {"status": result_status, "action": action_name, "result": result, "pipeline": True}
+
+            # ── Direct execution (API-only actions) ──
+            result = method()
+            result_status = result.get("status", "unknown") if isinstance(result, dict) else "unknown"
+            self._record_action(action_name, result)
+            return {"status": result_status, "action": action_name, "result": result}
         except Exception as e:
             self.logger.error("Idle action '%s' failed: %s", action_name, e)
             return {"status": "error", "action": action_name, "message": str(e)}
@@ -221,6 +253,52 @@ class GitHubPresence:
             update_payload["sha"] = sha
         result = self.identity.github_api_request("PUT", f"repos/{self.github_user}/{repo_name}/contents/README.md", update_payload)
         return {"status": result.get("status", "error"), "repo": repo_name, "resumed": True}
+
+    # ── PIPELINE PUBLISH ──
+
+    def _publish_validated(self, action_name: str, implementation: dict) -> dict:
+        """Publishes pipeline-validated code to GitHub.
+        
+        Called after the ActionPipeline's Plan→Research→Implement→Test phases
+        have all succeeded. This method handles the actual git push.
+        """
+        repo_name = implementation.get("repo_name", f"sai-{action_name}-{int(time.time())}")
+        description = implementation.get("description", f"Autonomous project by S.A.I.")
+        topics = implementation.get("topics", [])
+
+        self.logger.info("Publishing pipeline-validated code: %s", repo_name)
+
+        # Check if repo already exists
+        check = self.identity.github_api_request("GET", f"repos/{self.github_user}/{repo_name}")
+        if check.get("status") != "success":
+            # Create the repo
+            create_result = self.identity.github_api_request("POST", "user/repos", {
+                "name": repo_name,
+                "description": description,
+                "auto_init": False,
+                "private": False,
+            })
+            if create_result.get("status") != "success":
+                return {"status": "error", "message": f"Repo creation failed: {create_result}"}
+
+        # Push code
+        repo_url = f"https://github.com/{self.github_user}/{repo_name}.git"
+        push_result = self._scaffold_and_push(repo_url, implementation)
+
+        # Set topics
+        if topics:
+            self.identity.github_api_request(
+                "PUT", f"repos/{self.github_user}/{repo_name}/topics",
+                {"names": topics[:10]},
+            )
+
+        return {
+            "status": push_result.get("status", "error"),
+            "repo": repo_name,
+            "url": f"https://github.com/{self.github_user}/{repo_name}",
+            "push": push_result,
+            "pipeline_validated": True,
+        }
 
     # ── ACTION HANDLERS ──
 

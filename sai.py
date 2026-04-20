@@ -54,6 +54,7 @@ from modules.identity import IdentityManager
 from modules.github_presence import GitHubPresence
 from modules.idle_engine import IdleEngine
 from modules.email_manager import EmailManager
+from modules.action_pipeline import ActionPipeline
 
 class SAI:
     """
@@ -114,13 +115,20 @@ class SAI:
         self.rnd_lab = RnDLabManager(ai_provider=self.brain)
         self.is_running = False
 
-        # Autonomous GitHub Presence + Idle Engine
+        # Autonomous GitHub Presence + Action Pipeline + Idle Engine
         idle_config = self.config.get('idle', {})
+        self.action_pipeline = ActionPipeline(
+            brain=self.brain,
+            identity=self.identity,
+            memory=self.memory,
+            config=idle_config,
+        )
         self.github_presence = GitHubPresence(
             brain=self.brain,
             identity=self.identity,
             memory=self.memory,
-            config=idle_config
+            config=idle_config,
+            pipeline=self.action_pipeline,
         )
         self.idle_engine = IdleEngine(self, config=idle_config)
 
