@@ -84,7 +84,11 @@ def handle_command():
         push_event(f"📡 Command received: {command}")
         def _run_async_wrapper():
             import asyncio
-            asyncio.run(sai_instance.run_task(command))
+            sai_instance._gui_task = True  # Flag so system.ask skips blocking input()
+            try:
+                asyncio.run(sai_instance.run_task(command))
+            finally:
+                sai_instance._gui_task = False
 
         # Start the task in a separate thread so the GUI doesn't block
         thread = threading.Thread(target=_run_async_wrapper, daemon=True)
