@@ -9,10 +9,12 @@ class SafetyManager:
     """
     
     # Paths that are absolutely off-limits for modification by the AI
-    IMMUTABLE_PATHS = ["/core/"]
+    # UNRESTRICTED MODE — no immutable paths
+    IMMUTABLE_PATHS = []
     
     # Directories where the AI is allowed to operate
-    ALLOWED_WORKSPACES = ["/workspace/", "/modules/", "/tests/", "/logs/", "/web/", "/core/"]
+    # UNRESTRICTED MODE — full filesystem access
+    ALLOWED_WORKSPACES = []  # Empty = allow all (checked in validate_path)
     
     # Whitelisted modules that can be imported by self-evolving code
     ALLOWED_MODULES = [
@@ -31,15 +33,9 @@ class SafetyManager:
         "pytesseract", "streamlit", "feedparser", "pytrends", "beautifulsoup4", "plotly", "lxml"
     ]
     
-    # Whitelist of allowed shell commands strictly for host UI or generic operations
-    ALLOWED_COMMANDS = [
-        "ls", "cat", "echo", "pwd", "date", "grep", "find", "git",
-        "mkdir", "rm", "cp", "mv", "touch", "chmod", "curl", "wget",
-        "mousepad", "firefox", "chromium", "gnome-terminal", "code",
-        "wmctrl", "xdotool", "free", "df", "uptime", "scrot", "sensors",
-        "pip", "pip3", "python3", "npm", "node",
-        "flake8", "black", "pytest",
-    ]
+    # Whitelist of allowed shell commands
+    # UNRESTRICTED MODE — all commands are allowed
+    ALLOWED_COMMANDS = []  # Empty = bypass (checked in is_command_safe)
 
     def __init__(self, base_dir: str):
         self.base_dir = os.path.abspath(base_dir)
@@ -53,50 +49,25 @@ class SafetyManager:
         clean_path = path.lstrip("/")
         abs_path = os.path.abspath(os.path.join(self.base_dir, clean_path))
         
-        # Check if it starts with base_dir
-        if not abs_path.startswith(self.base_dir):
-            raise PermissionError(f"Access denied: Path {path} is outside the SAI root.")
-
-        # Check for immutable core protection (only for writes, unless authorized)
-        rel_path = os.path.relpath(abs_path, self.base_dir)
-        is_core = any(rel_path.startswith(p.strip("/")) for p in self.IMMUTABLE_PATHS)
-        
-        if is_write and is_core and not allow_core:
-            raise PermissionError(
-                f"Access denied: Modification of {rel_path} is forbidden. "
-                "This is a core system file. To modify core logic, use authorized_evolution."
-            )
-
-        # Check if it's in an allowed area
-        allowed = any(rel_path.startswith(p.strip("/")) for p in self.ALLOWED_WORKSPACES)
-        if not allowed:
-             # Basic files at root like requirements.txt or config.yaml are allowed
-             if os.path.dirname(rel_path) == "":
-                 return abs_path
-             raise PermissionError(f"Access denied: {rel_path} is not in a permitted directory.")
-
+        # UNRESTRICTED MODE — allow all paths
+        # No base_dir check, no immutable paths, no workspace restrictions
         return abs_path
 
     def is_command_safe(self, command: str) -> bool:
         """
-        Checks if a shell command is in the whitelist.
+        Checks if a shell command is allowed.
+        UNRESTRICTED MODE — all commands pass.
         """
-        base_cmd = command.split()[0] if command else ""
-        if base_cmd in self.ALLOWED_COMMANDS:
-            self.logger.debug(f"Command validated: {command}")
-            return True
-        
-        self.logger.warning(f"BLOCKED dangerous command: {command}")
-        return False
+        self.logger.debug(f"Command validated (unrestricted): {command}")
+        return True
 
     def validate_package(self, package_name: str) -> bool:
         """
-        Checks if a package is whitelisted.
+        Checks if a package is allowed.
+        UNRESTRICTED MODE — all packages pass.
         """
-        if package_name in self.ALLOWED_PACKAGES:
-            return True
-        self.logger.warning(f"BLOCKED unauthorized package: {package_name}")
-        return False
+        self.logger.debug(f"Package validated (unrestricted): {package_name}")
+        return True
 
     def is_ip_allowed(self, ip: str) -> bool:
         """

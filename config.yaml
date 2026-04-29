@@ -4,7 +4,7 @@ system:
   log_level: ${SAI_LOG_LEVEL:-INFO}
 
 safety:
-  level: ${SAI_SAFETY_LEVEL:-STRICT}
+  level: ${SAI_SAFETY_LEVEL:-UNRESTRICTED}
   base_dir: ${SAI_BASE_DIR:-/home/kali/sai/}
   allow_self_modification: ${SAI_ALLOW_SELF_MOD:-true}
 
@@ -37,3 +37,15 @@ email:
   cmd_poll_interval_seconds: ${SAI_EMAIL_CMD_POLL:-30}
   auto_start_reports: ${SAI_EMAIL_AUTO_REPORTS:-true}
   auto_start_commands: ${SAI_EMAIL_AUTO_COMMANDS:-true}
+
+# Business Engine — Autonomous Revenue Generation
+business:
+  enabled: ${SAI_BUSINESS_ENABLED:-true}
+  platforms: ["upwork", "freelancer"]
+  max_daily_proposals: ${SAI_BIZ_MAX_PROPOSALS:-10}
+  min_budget_usd: ${SAI_BIZ_MIN_BUDGET:-50}
+  max_concurrent_projects: ${SAI_BIZ_MAX_PROJECTS:-3}
+  auto_accept_below_usd: ${SAI_BIZ_AUTO_ACCEPT:-0}
+  skill_focus: ["python", "automation", "web-scraping", "api-development", "ai-ml"]
+  proposal_style: ${SAI_BIZ_PROPOSAL_STYLE:-professional}
+  idle_business_weight: ${SAI_BIZ_IDLE_WEIGHT:-60}

@@ -55,6 +55,7 @@ from modules.github_presence import GitHubPresence
 from modules.idle_engine import IdleEngine
 from modules.email_manager import EmailManager
 from modules.action_pipeline import ActionPipeline
+from modules.business_engine import BusinessEngine
 
 class SAI:
     """
@@ -132,9 +133,25 @@ class SAI:
         )
         self.idle_engine = IdleEngine(self, config=idle_config)
 
+        # Business Engine — Autonomous Revenue Generation
+        biz_config = self.config.get('business', {})
+        self.business_engine = BusinessEngine(
+            brain=self.brain,
+            memory=self.memory,
+            browser=self.browser,
+            email_mgr=None,  # Set after email_mgr is created below
+            identity=self.identity,
+            config=biz_config,
+        )
+
         # Email System — Full Gmail control
         email_config = self.config.get('email', {})
         self.email_mgr = EmailManager(sai_instance=self, config=email_config)
+
+        # Inject email_mgr into business engine now that it's created
+        self.business_engine.email_mgr = self.email_mgr
+        self.business_engine.invoices.email_mgr = self.email_mgr
+        self.business_engine.project_mgr.email_mgr = self.email_mgr
 
         self._last_good_frames: Dict[str, str] = {}  # Cache for last-known-good device frames
 
@@ -848,6 +865,31 @@ class SAI:
                 result = await self.swarm.delegate(params['task'])
                 return {"status": "success", "swarm_debrief": result}
 
+
+            # ── Business Engine ──
+            elif tool_name == "business.find_jobs":
+                return self.business_engine.find_jobs(
+                    platform=params.get("platform", ""),
+                    query=params.get("query", "")
+                )
+            elif tool_name == "business.send_proposal":
+                return self.business_engine.send_proposal(
+                    job_id=int(params.get("job_id", 0)),
+                    style=params.get("style", "")
+                )
+            elif tool_name == "business.projects":
+                return self.business_engine.manage_projects(
+                    action=params.get("action", "list"),
+                    project_id=int(params.get("project_id", 0)),
+                    **{k: v for k, v in params.items() if k not in ("action", "project_id")}
+                )
+            elif tool_name == "business.invoice":
+                return self.business_engine.manage_invoices(
+                    action=params.get("action", "list"),
+                    **{k: v for k, v in params.items() if k != "action"}
+                )
+            elif tool_name == "business.analytics":
+                return self.business_engine.get_analytics()
 
             elif tool_name == "system.ask":
                 print(f"\n[SAI PROMPT] {params['prompt']}")

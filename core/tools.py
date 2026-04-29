@@ -455,6 +455,52 @@ class ToolManifest:
             "name": "email.google_signin",
             "description": "Returns Google account credentials for Sign-in with Google flows on websites.",
             "parameters": {}
+        },
+        # ── Business Engine Tools ──
+        {
+            "name": "business.find_jobs",
+            "description": "Searches freelance platforms (Upwork, Freelancer) for job listings matching SAI's skills. Can specify platform and search query.",
+            "parameters": {
+                "platform": "string (optional: 'upwork', 'freelancer'. Default: searches all configured)",
+                "query": "string (optional: custom search query. Default: uses configured skill_focus)"
+            }
+        },
+        {
+            "name": "business.send_proposal",
+            "description": "Generates and sends a tailored proposal for a freelance job. Can target a specific job_id or auto-select the best matching job.",
+            "parameters": {
+                "job_id": "integer (optional: specific job ID to bid on)",
+                "style": "string (optional: 'professional', 'casual', 'technical'. Default: professional)"
+            }
+        },
+        {
+            "name": "business.projects",
+            "description": "Manages client projects. Actions: 'list', 'create', 'start', 'work', 'deliver', 'status'.",
+            "parameters": {
+                "action": "string ('list', 'create', 'start', 'work', 'deliver', 'status')",
+                "project_id": "integer (required for start/work/deliver/status)",
+                "title": "string (for create)",
+                "description": "string (for create)",
+                "client_name": "string (for create)",
+                "budget_usd": "float (for create)",
+                "status": "string (optional filter for list)"
+            }
+        },
+        {
+            "name": "business.invoice",
+            "description": "Invoice management. Actions: 'list', 'create', 'pay', 'remind', 'revenue'.",
+            "parameters": {
+                "action": "string ('list', 'create', 'pay', 'remind', 'revenue')",
+                "invoice_number": "string (for pay/remind)",
+                "client_name": "string (for create)",
+                "amount_usd": "float (for create)",
+                "description": "string (for create)"
+            }
+        },
+        {
+            "name": "business.analytics",
+            "description": "Returns comprehensive business analytics: revenue, proposals, projects, clients, job pipeline metrics.",
+            "parameters": {}
         }
     ]
 

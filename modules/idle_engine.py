@@ -59,6 +59,13 @@ class IdleEngine:
         self._interrupted_state: Optional[Dict[str, Any]] = None
         self._action_in_progress = False  # True while an idle action is executing
 
+        # Business vs GitHub weight — percentage of idle time allocated to business
+        self._business_weight = int(self.config.get("business_weight", 0))
+        # Override from business config if present
+        if hasattr(self.sai, 'config'):
+            biz_cfg = self.sai.config.get('business', {}) if hasattr(self.sai, 'config') else {}
+            self._business_weight = int(biz_cfg.get('idle_business_weight', self._business_weight))
+
         # GUI callback for real-time idle log broadcasting
         self._gui_callback = None
 
@@ -211,6 +218,20 @@ class IdleEngine:
                 self._sleep_interruptible(120)  # Back off on error
 
     def _execute_idle_action(self):
+        """Triggers a GitHub presence or Business action based on configured weights."""
+        # Determine whether to run a business or github action
+        use_business = (
+            self._business_weight > 0 and
+            hasattr(self.sai, 'business_engine') and
+            random.randint(1, 100) <= self._business_weight
+        )
+
+        if use_business:
+            self._execute_business_action()
+        else:
+            self._execute_github_action()
+
+    def _execute_github_action(self):
         """Triggers a GitHub presence action."""
         if not hasattr(self.sai, 'github_presence'):
             self.logger.warning("GitHubPresence module not initialized. Skipping.")
@@ -258,6 +279,42 @@ class IdleEngine:
 
         except Exception as e:
             self.logger.error("Failed to execute idle action: %s", e)
+            self._broadcast("action_error", {"error": str(e)})
+        finally:
+            self._action_in_progress = False
+
+    def _execute_business_action(self):
+        """Triggers a Business Engine action."""
+        self.logger.info("SAI is idle — executing autonomous business action...")
+        self._action_in_progress = True
+        self._broadcast("action_start", {"message": "Executing autonomous business action..."})
+        try:
+            result = self.sai.business_engine.run_business_action()
+            self._actions_executed += 1
+            self._last_action_time = time.time()
+
+            action = result.get("action", "unknown")
+            status = result.get("status", "unknown")
+
+            self.logger.info(
+                "Business action completed: %s [%s] (total: %d)",
+                action, status, self._actions_executed
+            )
+
+            self._broadcast("action_complete", {
+                "action": f"business:{action}",
+                "status": status,
+                "total": self._actions_executed,
+                "result_summary": str(result.get("result", ""))[:200],
+            })
+
+            if hasattr(self.sai, 'event_bus'):
+                self.sai.event_bus.publish("business_action_executed", {
+                    "action": action, "status": status, "result": result
+                })
+
+        except Exception as e:
+            self.logger.error("Failed to execute business action: %s", e)
             self._broadcast("action_error", {"error": str(e)})
         finally:
             self._action_in_progress = False
@@ -314,7 +371,7 @@ class IdleEngine:
 
     def get_status(self) -> dict:
         """Returns idle engine diagnostics."""
-        return {
+        status = {
             "enabled": self._enabled,
             "running": self._running,
             "paused": self._paused,
@@ -330,5 +387,17 @@ class IdleEngine:
                 if self._last_action_time else None
             ),
             "cooldown_range": f"{self._min_cooldown}-{self._max_cooldown}s",
-            "sai_is_idle": not self.sai.is_running
+            "sai_is_idle": not self.sai.is_running,
+            "business_weight_pct": self._business_weight,
+            "github_weight_pct": 100 - self._business_weight,
         }
+
+        # Add business engine status if available
+        if hasattr(self.sai, 'business_engine'):
+            try:
+                biz_status = self.sai.business_engine.get_status()
+                status["business_actions"] = biz_status.get("actions_executed", 0)
+            except Exception:
+                pass
+
+        return status

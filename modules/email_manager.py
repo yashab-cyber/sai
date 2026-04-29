@@ -420,6 +420,25 @@ class EmailManager:
         if self.sai:
             sections["🎯 Current Task"] = "Busy (executing user command)" if self.sai.is_running else "Idle — autonomous mode"
 
+        # Business engine status
+        if self.sai and hasattr(self.sai, "business_engine"):
+            try:
+                biz_status = self.sai.business_engine.get_status()
+                revenue = biz_status.get("revenue", {})
+                proposals = biz_status.get("proposals", {})
+                projects = biz_status.get("projects", {})
+                clients = biz_status.get("clients", {})
+                lines = [
+                    f"Revenue: ${revenue.get('total_earned_usd', 0):.2f} earned | ${revenue.get('pending_usd', 0):.2f} pending",
+                    f"Proposals: {proposals.get('total_proposals', 0)} total | {proposals.get('won', 0)} won | {proposals.get('win_rate_pct', 0)}% win rate",
+                    f"Projects: {projects.get('active', 0)} active | {projects.get('delivered', 0)} delivered | {projects.get('paid', 0)} paid",
+                    f"Clients: {clients.get('total_clients', 0)} total | {clients.get('preferred_clients', 0)} preferred",
+                    f"Actions: {biz_status.get('actions_executed', 0)} business actions executed",
+                ]
+                sections["💰 Business Engine"] = "\n".join(lines)
+            except Exception as e:
+                sections["💰 Business Engine"] = f"Error fetching business status: {e}"
+
         self.send_html_report(self.admin_email, f"Status Report — {now}", sections)
         self.logger.info("Status report sent to %s", self.admin_email)
 
