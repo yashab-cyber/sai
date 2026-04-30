@@ -4,9 +4,10 @@ import { OrbitControls, Torus, Sphere, Icosahedron, Stars, MeshDistortMaterial }
 import { io, Socket } from 'socket.io-client';
 import {
   Terminal, Activity, Cpu, HardDrive, Thermometer,
-  Zap, Eye, Globe, Mic, Brain, Shield, Code, FolderOpen, 
+  Zap, Eye, Globe, Mic, Brain, Shield, Code, FolderOpen,
   BarChart3, Settings, Wifi, Clock, Play, AlertTriangle,
-  CheckCircle, XCircle, Package, GitBranch
+  CheckCircle, XCircle, Package, GitBranch, DollarSign,
+  Briefcase, TrendingUp, FileText, ClipboardList
 } from 'lucide-react';
 import * as THREE from 'three';
 import './App.css';
@@ -61,6 +62,39 @@ interface SettingsData {
   brain_provider: string;
   brain_model: string;
   safety_level: string;
+}
+
+interface BusinessAnalytics {
+  generated_at?: string;
+  revenue?: {
+    total_earned_usd?: number;
+    pending_usd?: number;
+    overdue_invoices?: number;
+    total_invoices?: number;
+    collection_rate_pct?: number;
+  };
+  pipeline?: {
+    total_jobs_discovered?: number;
+    avg_fit_score?: number;
+  };
+  proposals?: {
+    total_proposals?: number;
+    submitted?: number;
+    won?: number;
+    win_rate_pct?: number;
+    today_proposals?: number;
+    daily_limit?: number;
+  };
+  projects?: {
+    total_projects?: number;
+    active?: number;
+    delivered?: number;
+    total_revenue_usd?: number;
+  };
+  engine_status?: {
+    actions_executed?: number;
+    last_action_time?: string;
+  };
 }
 
 // ════════════════════════════════════════════════════════
@@ -249,6 +283,8 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [idleStatus, setIdleStatus] = useState<any>(null);
+  const [showBusiness, setShowBusiness] = useState(false);
+  const [bizData, setBizData] = useState<BusinessAnalytics | null>(null);
 
   const historyEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -286,7 +322,12 @@ export default function App() {
     const pollIdle = setInterval(() => {
       fetch('/api/idle/status').then(r => r.json()).then(d => { if (d.status === 'success') setIdleStatus(d); }).catch(() => null);
     }, 5000);
-    return () => clearInterval(pollIdle);
+    // Poll business analytics every 15 seconds
+    const fetchBiz = () =>
+      fetch('/api/business/analytics').then(r => r.json()).then(d => { if (d.status === 'success') setBizData(d.analytics); }).catch(() => null);
+    fetchBiz();
+    const pollBiz = setInterval(fetchBiz, 15000);
+    return () => { clearInterval(pollIdle); clearInterval(pollBiz); };
   }, []);
 
   // Voice trigger (Web Speech API)
@@ -457,30 +498,39 @@ export default function App() {
 
   const getIdleLogDisplay = (entry: IdleLogEntry) => {
     const icons: Record<string, React.ReactNode> = {
-      'action_start': <Play size={10} style={{ color: 'var(--cyan)' }} />,
-      'action_complete': <CheckCircle size={10} style={{ color: 'var(--green)' }} />,
-      'action_error': <XCircle size={10} style={{ color: 'var(--red)' }} />,
-      'pipeline_start': <GitBranch size={10} style={{ color: 'var(--cyan)' }} />,
-      'pipeline_end': <CheckCircle size={10} style={{ color: 'var(--green)' }} />,
-      'pipeline_error': <XCircle size={10} style={{ color: 'var(--red)' }} />,
-      'phase': <Package size={10} style={{ color: 'var(--purple)' }} />,
-      'phase_complete': <CheckCircle size={10} style={{ color: 'var(--green)' }} />,
-      'phase_error': <AlertTriangle size={10} style={{ color: 'var(--red)' }} />,
-      'quality_gate_failed': <XCircle size={10} style={{ color: 'var(--red)' }} />,
-      'next_cooldown': <Clock size={10} style={{ color: 'var(--text-muted)' }} />,
+      'action_start':          <Play size={10} style={{ color: 'var(--cyan)' }} />,
+      'action_complete':       <CheckCircle size={10} style={{ color: 'var(--green)' }} />,
+      'action_error':          <XCircle size={10} style={{ color: 'var(--red)' }} />,
+      'plan_start':            <Brain size={10} style={{ color: 'var(--purple)' }} />,
+      'plan_complete':         <ClipboardList size={10} style={{ color: 'var(--cyan)' }} />,
+      'review_start':          <FileText size={10} style={{ color: 'var(--amber)' }} />,
+      'review_complete':       <CheckCircle size={10} style={{ color: 'var(--green)' }} />,
+      'pipeline_start':        <GitBranch size={10} style={{ color: 'var(--cyan)' }} />,
+      'pipeline_end':          <CheckCircle size={10} style={{ color: 'var(--green)' }} />,
+      'pipeline_error':        <XCircle size={10} style={{ color: 'var(--red)' }} />,
+      'phase':                 <Package size={10} style={{ color: 'var(--purple)' }} />,
+      'phase_complete':        <CheckCircle size={10} style={{ color: 'var(--green)' }} />,
+      'phase_error':           <AlertTriangle size={10} style={{ color: 'var(--red)' }} />,
+      'quality_gate_failed':   <XCircle size={10} style={{ color: 'var(--red)' }} />,
+      'next_cooldown':         <Clock size={10} style={{ color: 'var(--text-muted)' }} />,
     };
+    const e = entry as any;
     const msgs: Record<string, string> = {
-      'action_start': entry.message || 'Starting idle action...',
-      'action_complete': `${entry.action} [${entry.status}] #${entry.total}`,
-      'action_error': `Error: ${entry.error?.substring(0, 80)}`,
-      'pipeline_start': `Pipeline: ${entry.action}`,
-      'pipeline_end': `Pipeline done: ${entry.action} [${entry.status}]`,
-      'pipeline_error': `Pipeline error: ${entry.error?.substring(0, 80)}`,
-      'phase': `▸ ${(entry.phase || '').toUpperCase()}${entry.files ? ` (${entry.files} files)` : ''}`,
-      'phase_complete': `✓ ${(entry.phase || '').toUpperCase()} done${entry.rounds ? ` (${entry.rounds} rounds)` : ''}`,
-      'phase_error': `✗ ${entry.phase} failed: ${entry.error}`,
-      'quality_gate_failed': `Quality gate: ${entry.rounds} rounds exhausted`,
-      'next_cooldown': `Next action in ${entry.seconds}s`,
+      'action_start':         entry.message || 'Starting action...',
+      'action_complete':      `${entry.action} [${entry.status}] #${entry.total}`,
+      'action_error':         `Error: ${entry.error?.substring(0, 80)}`,
+      'plan_start':           `Planning ${e.domain || ''} action...`,
+      'plan_complete':        `Plan: ${entry.action} — ${String(e.reasoning || '').substring(0, 60)}`,
+      'review_start':         `Reviewing: ${entry.action}`,
+      'review_complete':      `Review done — ${String(e.lessons || '').substring(0, 70)}`,
+      'pipeline_start':       `Pipeline: ${entry.action}`,
+      'pipeline_end':         `Pipeline done: ${entry.action} [${entry.status}]`,
+      'pipeline_error':       `Pipeline error: ${entry.error?.substring(0, 80)}`,
+      'phase':                `▸ ${(entry.phase || '').toUpperCase()}${entry.files ? ` (${entry.files} files)` : ''}`,
+      'phase_complete':       `✓ ${(entry.phase || '').toUpperCase()} done${entry.rounds ? ` (${entry.rounds} rounds)` : ''}`,
+      'phase_error':          `✗ ${entry.phase} failed: ${entry.error}`,
+      'quality_gate_failed':  `Quality gate: ${entry.rounds} rounds exhausted`,
+      'next_cooldown':        `Next action in ${entry.seconds}s`,
     };
     return { icon: icons[entry.type] || <Zap size={10} />, text: msgs[entry.type] || entry.type };
   };
@@ -806,6 +856,95 @@ export default function App() {
                 })
               )}
             </div>
+
+            {/* ── BUSINESS DASHBOARD TOGGLE ── */}
+            <div className="mt-3">
+              <button onClick={() => setShowBusiness(!showBusiness)}
+                className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-md"
+                style={{ background: bizData ? 'rgba(0,200,100,0.06)' : 'rgba(255,255,255,0.03)', border: `1px solid ${bizData ? 'rgba(0,200,100,0.25)' : 'var(--border)'}`, fontFamily: 'var(--font-display)', fontSize: '9px', letterSpacing: '0.15em', color: bizData ? 'var(--green)' : 'var(--text-muted)', cursor: 'pointer' }}
+              >
+                <Briefcase size={10} />
+                {showBusiness ? 'HIDE BUSINESS' : 'BUSINESS DASH'}
+                {bizData?.revenue?.total_earned_usd !== undefined && (
+                  <span style={{ marginLeft: 'auto', color: 'var(--green)', fontFamily: 'var(--font-mono)' }}>
+                    ${bizData.revenue.total_earned_usd.toFixed(0)}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {showBusiness && (
+              <div className="flex flex-col gap-1.5 mt-2 p-2 rounded-md" style={{ background: 'rgba(0,200,100,0.03)', border: '1px solid rgba(0,200,100,0.15)' }}>
+                {!bizData ? (
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-muted)', fontStyle: 'italic', textAlign: 'center', padding: '8px 0' }}>
+                    Business engine offline
+                  </div>
+                ) : (
+                  <>
+                    {/* Revenue */}
+                    <div style={{ fontFamily: 'var(--font-display)', fontSize: '8px', letterSpacing: '0.12em', color: 'var(--green)', opacity: 0.7, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <DollarSign size={8} /> REVENUE
+                    </div>
+                    {[
+                      ['EARNED', `$${(bizData.revenue?.total_earned_usd ?? 0).toFixed(2)}`],
+                      ['PENDING', `$${(bizData.revenue?.pending_usd ?? 0).toFixed(2)}`],
+                      ['OVERDUE INV', String(bizData.revenue?.overdue_invoices ?? 0)],
+                    ].map(([k, v]) => (
+                      <div key={k} className="flex justify-between" style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>{k}</span>
+                        <span style={{ color: 'var(--text-secondary)' }}>{v}</span>
+                      </div>
+                    ))}
+
+                    {/* Proposals */}
+                    <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', marginTop: '4px', paddingTop: '4px', fontFamily: 'var(--font-display)', fontSize: '8px', letterSpacing: '0.12em', color: 'var(--cyan)', opacity: 0.7, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <TrendingUp size={8} /> PROPOSALS
+                    </div>
+                    {[
+                      ['TOTAL', String(bizData.proposals?.total_proposals ?? 0)],
+                      ['WON', String(bizData.proposals?.won ?? 0)],
+                      ['WIN RATE', `${(bizData.proposals?.win_rate_pct ?? 0).toFixed(1)}%`],
+                      ['TODAY', `${bizData.proposals?.today_proposals ?? 0} / ${bizData.proposals?.daily_limit ?? 10}`],
+                    ].map(([k, v]) => (
+                      <div key={k} className="flex justify-between" style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>{k}</span>
+                        <span style={{ color: 'var(--text-secondary)' }}>{v}</span>
+                      </div>
+                    ))}
+
+                    {/* Projects */}
+                    <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', marginTop: '4px', paddingTop: '4px', fontFamily: 'var(--font-display)', fontSize: '8px', letterSpacing: '0.12em', color: 'var(--purple)', opacity: 0.7, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <Briefcase size={8} /> PROJECTS
+                    </div>
+                    {[
+                      ['ACTIVE', String(bizData.projects?.active ?? 0)],
+                      ['DELIVERED', String(bizData.projects?.delivered ?? 0)],
+                      ['TOTAL', String(bizData.projects?.total_projects ?? 0)],
+                    ].map(([k, v]) => (
+                      <div key={k} className="flex justify-between" style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>{k}</span>
+                        <span style={{ color: 'var(--text-secondary)' }}>{v}</span>
+                      </div>
+                    ))}
+
+                    {/* Pipeline */}
+                    <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', marginTop: '4px', paddingTop: '4px', fontFamily: 'var(--font-display)', fontSize: '8px', letterSpacing: '0.12em', color: 'var(--amber)', opacity: 0.7, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <BarChart3 size={8} /> JOB PIPELINE
+                    </div>
+                    {[
+                      ['DISCOVERED', String(bizData.pipeline?.total_jobs_discovered ?? 0)],
+                      ['AVG SCORE', `${(bizData.pipeline?.avg_fit_score ?? 0).toFixed(0)}/100`],
+                      ['ACTIONS', String(bizData.engine_status?.actions_executed ?? 0)],
+                    ].map(([k, v]) => (
+                      <div key={k} className="flex justify-between" style={{ fontFamily: 'var(--font-mono)', fontSize: '9px' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>{k}</span>
+                        <span style={{ color: 'var(--text-secondary)' }}>{v}</span>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
 
             {/* ── SETTINGS TOGGLE ── */}
             <div className="mt-3">

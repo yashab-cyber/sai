@@ -112,15 +112,17 @@ class JobScraper:
             if nav_result.get("status") != "success":
                 return {"status": "error", "message": f"Navigation failed: {nav_result}"}
 
-            # Wait for content to load
+            # Wait for JS-rendered content (SPAs like Upwork render after DOMContentLoaded)
             import asyncio
-            await asyncio.sleep(3)
+            await asyncio.sleep(5)
 
             # Scrape visible text content
             page_text = await self.browser.scrape_page_text()
             text_content = page_text.get("text", "") if isinstance(page_text, dict) else str(page_text)
 
             if not text_content or len(text_content) < 100:
+                # Capture screenshot for debugging before giving up
+                await self.browser.capture_screenshot(f"logs/scrape_debug_{platform}.png")
                 return {"status": "error", "message": "No content scraped from page"}
 
             # Use LLM to extract structured job data from raw page text

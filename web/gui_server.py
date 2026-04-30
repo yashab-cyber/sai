@@ -44,9 +44,13 @@ def add_idle_log(entry: dict):
     # Also push to the main event log stream
     event_type = entry.get("type", "")
     event_msgs = {
-        "action_start": "⚡ Idle: Starting autonomous action...",
-        "action_complete": f"✅ Idle: {entry.get('action', '?')} [{entry.get('status', '?')}] (#{entry.get('total', 0)})",
-        "action_error": f"❌ Idle error: {str(entry.get('error', ''))[:80]}",
+        "action_start": f"⚡ {entry.get('message', 'Starting action...')}",
+        "action_complete": f"✅ {entry.get('action', '?')} [{entry.get('status', '?')}] (#{entry.get('total', 0)})",
+        "action_error": f"❌ Error: {str(entry.get('error', ''))[:80]}",
+        "plan_start": f"🧠 Planning {entry.get('domain', '')} action...",
+        "plan_complete": f"📋 Plan: {entry.get('action', '?')} — {str(entry.get('reasoning', ''))[:60]}",
+        "review_start": f"🔍 Reviewing outcome of {entry.get('action', '?')}...",
+        "review_complete": f"{'✅' if entry.get('success') else '⚠️'} Review: {str(entry.get('lessons', ''))[:80]}",
         "pipeline_start": f"🔧 Pipeline: {entry.get('action', '?')}",
         "pipeline_end": f"{'✅' if entry.get('status') == 'success' else '❌'} Pipeline done: {entry.get('action', '?')} [{entry.get('status', '?')}]",
         "pipeline_error": f"❌ Pipeline error: {str(entry.get('error', ''))[:80]}",
@@ -257,7 +261,94 @@ def get_idle_status():
         "max_cooldown": ie._max_cooldown,
         "last_action_time": ie._last_action_time,
         "action_in_progress": ie._action_in_progress,
+        "last_plan": ie._last_plan,
     })
+
+
+# ══════════════════════════════════════════════════
+# BUSINESS DASHBOARD API
+# ══════════════════════════════════════════════════
+
+@app.route('/api/business/analytics', methods=['GET'])
+def get_business_analytics():
+    """Returns comprehensive business analytics from BusinessDashboard."""
+    sai = app.config.get('SAI_INSTANCE')
+    if not sai or not hasattr(sai, 'business_engine'):
+        return jsonify({"status": "error", "message": "Business engine not available"}), 404
+    try:
+        data = sai.business_engine.get_analytics()
+        data["engine_status"] = sai.business_engine.get_status()
+        return jsonify({"status": "success", "analytics": data})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/business/jobs', methods=['GET'])
+def get_business_jobs():
+    """Returns job listings from the JobScraper."""
+    sai = app.config.get('SAI_INSTANCE')
+    if not sai or not hasattr(sai, 'business_engine'):
+        return jsonify({"status": "error", "message": "Business engine not available"}), 404
+    try:
+        limit = int(request.args.get('limit', 20))
+        status_filter = request.args.get('status', '')
+        jobs = sai.business_engine.scraper.list_jobs(
+            status=status_filter, limit=limit
+        ) if hasattr(sai.business_engine, 'scraper') else []
+        stats = sai.business_engine.scraper.get_stats() if hasattr(sai.business_engine, 'scraper') else {}
+        return jsonify({"status": "success", "jobs": jobs, "stats": stats, "count": len(jobs)})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/business/proposals', methods=['GET'])
+def get_business_proposals():
+    """Returns proposal history."""
+    sai = app.config.get('SAI_INSTANCE')
+    if not sai or not hasattr(sai, 'business_engine'):
+        return jsonify({"status": "error", "message": "Business engine not available"}), 404
+    try:
+        limit = int(request.args.get('limit', 20))
+        proposals = sai.business_engine.proposals.list_proposals(
+            limit=limit
+        ) if hasattr(sai.business_engine, 'proposals') else []
+        stats = sai.business_engine.proposals.get_stats() if hasattr(sai.business_engine, 'proposals') else {}
+        return jsonify({"status": "success", "proposals": proposals, "stats": stats})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/business/projects', methods=['GET'])
+def get_business_projects():
+    """Returns project list from ProjectManager."""
+    sai = app.config.get('SAI_INSTANCE')
+    if not sai or not hasattr(sai, 'business_engine'):
+        return jsonify({"status": "error", "message": "Business engine not available"}), 404
+    try:
+        status_filter = request.args.get('status', '')
+        limit = int(request.args.get('limit', 20))
+        projects = sai.business_engine.manage_projects(
+            action='list', status=status_filter, limit=limit
+        )
+        return jsonify({"status": "success", **projects})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/business/invoices', methods=['GET'])
+def get_business_invoices():
+    """Returns invoice list and revenue summary."""
+    sai = app.config.get('SAI_INSTANCE')
+    if not sai or not hasattr(sai, 'business_engine'):
+        return jsonify({"status": "error", "message": "Business engine not available"}), 404
+    try:
+        status_filter = request.args.get('status', '')
+        result = sai.business_engine.manage_invoices(action='list', status=status_filter)
+        revenue = sai.business_engine.manage_invoices(action='revenue')
+        return jsonify({"status": "success", "invoices": result.get('invoices', []),
+                        "revenue": revenue, "count": result.get('count', 0)})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route('/api/idle/logs', methods=['GET'])

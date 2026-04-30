@@ -9,7 +9,7 @@ class BrowserManager:
     Supports navigation, interaction, and visual analysis.
     """
     
-    def __init__(self, headless: bool = True, timeout: int = 30000, locale: str = "en-US", timezone: str = "UTC"):
+    def __init__(self, headless: bool = True, timeout: int = 60000, locale: str = "en-US", timezone: str = "UTC"):
         self.logger = logging.getLogger("SAI.Browser")
         self.headless = headless
         self.timeout = timeout
@@ -40,12 +40,22 @@ class BrowserManager:
             self.page = await self.context.new_page()
             self.page.set_default_timeout(self.timeout)
 
-    async def navigate(self, url: str):
-        """Navigates to a URL."""
+    async def navigate(self, url: str, wait_until: str = "domcontentloaded"):
+        """
+        Navigates to a URL.
+
+        Uses 'domcontentloaded' by default (works on SPAs like Upwork).
+        Falls back to 'load' if that also times out before raising.
+        """
         try:
             await self._ensure_browser()
             self.logger.info(f"Navigating to {url}")
-            await self.page.goto(url, wait_until="networkidle")
+            try:
+                await self.page.goto(url, wait_until=wait_until, timeout=self.timeout)
+            except Exception:
+                # Fallback: settle for 'load' event (fires even on heavy SPAs)
+                self.logger.info("domcontentloaded timed out, retrying with 'load'...")
+                await self.page.goto(url, wait_until="load", timeout=self.timeout)
             return {"status": "success", "title": await self.page.title(), "url": self.page.url}
         except Exception as e:
             self.logger.error(f"Navigation failed: {e}")
