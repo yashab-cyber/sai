@@ -89,24 +89,150 @@ class BusinessEngine:
     # IDLE ENGINE ENTRY POINT
     # ══════════════════════════════════════════
 
-    def run_business_action(self) -> Dict[str, Any]:
+    def plan_action(self) -> Dict[str, Any]:
+        """
+        STAGE 1 — PLAN.
+        Asks the LLM to assess the current business state and choose the single
+        best action to take, with explicit reasoning.
+
+        Returns:
+            dict with keys:
+                action      — one of the BUSINESS_ACTIONS names
+                reasoning   — why this action was chosen
+                context     — any pre-gathered context the handler should use
+        """
+        if not self.brain:
+            # Fallback to weighted random if no brain available
+            actions = [a for a in self.BUSINESS_ACTIONS if a["weight"] > 0]
+            weights = [a["weight"] for a in actions]
+            fallback = random.choices(actions, weights=weights, k=1)[0]
+            return {"action": fallback["name"], "reasoning": "brain_unavailable", "context": {}}
+
+        # Gather current state to give the LLM context
+        state_summary = self._get_state_summary()
+        action_names = [a["name"] for a in self.BUSINESS_ACTIONS if a["weight"] > 0]
+        recent = [r["action"] for r in self.action_history[-5:]]
+
+        prompt = (
+            "You are S.A.I., an autonomous AI agent running a freelance business.\n"
+            "You have a slice of idle time. Assess the current business state and decide "
+            "the single most valuable action to take right now.\n\n"
+            f"CURRENT BUSINESS STATE:\n{state_summary}\n\n"
+            f"RECENT ACTIONS (avoid repeating immediately):\n{recent}\n\n"
+            f"AVAILABLE ACTIONS: {action_names}\n\n"
+            "Action guide:\n"
+            "  find_jobs        — Scrape freelance platforms for new leads\n"
+            "  evaluate_jobs    — Score unscored job listings (do this after finding jobs)\n"
+            "  send_proposals   — Generate + queue proposals for top-scored jobs\n"
+            "  deliver_project  — Work on an active in-progress project\n"
+            "  follow_up        — Send overdue invoice reminders\n"
+            "  update_portfolio — Refresh profile stats and descriptions\n\n"
+            "Choose the action that will have the highest impact given the current state.\n"
+            "Respond ONLY in JSON:\n"
+            '{"action": "<one of the action names above>", '
+            '"reasoning": "<one or two sentences why>", '
+            '"context": {}}'
+        )
+
+        try:
+            response = self.brain.prompt("Business action planning.", prompt)
+            plan = response if isinstance(response, dict) else self._parse_json_safe(response)
+            if plan.get("action") not in action_names:
+                raise ValueError(f"Invalid action: {plan.get('action')}")
+            self.logger.info(
+                "[PLAN] Business action chosen: %s — %s",
+                plan["action"], str(plan.get("reasoning", ""))[:120],
+            )
+            return plan
+        except Exception as e:
+            self.logger.warning("[PLAN] Business planning failed (%s), using weighted random.", e)
+            actions = [a for a in self.BUSINESS_ACTIONS if a["weight"] > 0]
+            weights = [a["weight"] for a in actions]
+            fallback = random.choices(actions, weights=weights, k=1)[0]
+            return {"action": fallback["name"], "reasoning": "planning_failed", "context": {}}
+
+    def review_action(self, action_name: str, result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        STAGE 3 — REVIEW.
+        LLM post-mortem on the completed action. Stores reflection in semantic memory.
+
+        Returns:
+            dict with keys:
+                success           — bool
+                lessons           — what went well / what to improve
+                next_recommendation — what to prioritise on the next idle cycle
+        """
+        if not self.brain:
+            return {"success": True, "lessons": "brain_unavailable", "next_recommendation": ""}
+
+        status = result.get("status", "unknown") if isinstance(result, dict) else "unknown"
+        result_summary = str(result)[:400]
+
+        prompt = (
+            "You are S.A.I., an autonomous AI agent reviewing a completed business action.\n"
+            f"ACTION: {action_name}\n"
+            f"STATUS: {status}\n"
+            f"RESULT: {result_summary}\n\n"
+            "Provide a brief self-evaluation:\n"
+            "1. Was this the right action to take? Did it succeed?\n"
+            "2. What lessons can be drawn?\n"
+            "3. What should be prioritised on the NEXT idle cycle?\n\n"
+            "Respond ONLY in JSON:\n"
+            '{"success": true/false, "lessons": "<brief lessons>", '
+            '"next_recommendation": "<action name or strategy>"}'
+        )
+
+        try:
+            response = self.brain.prompt("Business action review.", prompt)
+            review = response if isinstance(response, dict) else self._parse_json_safe(response)
+            self.logger.info(
+                "[REVIEW] Business action '%s' reviewed: success=%s, next=%s",
+                action_name,
+                review.get("success"),
+                str(review.get("next_recommendation", ""))[:80],
+            )
+            # Persist reflection to semantic memory
+            if self.memory and self.brain:
+                try:
+                    content = (
+                        f"Business review: {action_name} [{status}] — "
+                        f"{review.get('lessons', '')} | Next: {review.get('next_recommendation', '')}"
+                    )
+                    embedding = self.brain.get_embedding(content)
+                    self.memory.save_semantic_memory(
+                        content, embedding,
+                        {"type": "business_review", "action": action_name, "status": status}
+                    )
+                except Exception:
+                    pass
+            return review
+        except Exception as e:
+            self.logger.debug("[REVIEW] Review failed: %s", e)
+            return {"success": status == "success", "lessons": "", "next_recommendation": ""}
+
+    def run_business_action(self, planned_action: str = "") -> Dict[str, Any]:
         """
         Main entry point — called by IdleEngine during business-allocated idle time.
-        Selects a weighted random business action and executes it.
+
+        Args:
+            planned_action: If provided (from plan_action()), run this specific action
+                            instead of selecting randomly.
         """
         if not self._enabled:
             return {"status": "skipped", "reason": "business_engine_disabled"}
 
-        # Select action
-        actions = [a for a in self.BUSINESS_ACTIONS if a["weight"] > 0]
-        if not actions:
-            return {"status": "skipped", "reason": "no_actions_configured"}
-
-        weights = [a["weight"] for a in actions]
-        selected = random.choices(actions, weights=weights, k=1)[0]
-        action_name = selected["name"]
-
-        self.logger.info("Business action selected: %s", action_name)
+        # Use planned action if provided, otherwise fall back to weighted random
+        if planned_action:
+            action_name = planned_action
+            self.logger.info("[EXECUTE] Running planned business action: %s", action_name)
+        else:
+            actions = [a for a in self.BUSINESS_ACTIONS if a["weight"] > 0]
+            if not actions:
+                return {"status": "skipped", "reason": "no_actions_configured"}
+            weights = [a["weight"] for a in actions]
+            selected = random.choices(actions, weights=weights, k=1)[0]
+            action_name = selected["name"]
+            self.logger.info("[EXECUTE] Business action (random fallback): %s", action_name)
 
         try:
             handler = getattr(self, f"_action_{action_name}", None)
@@ -359,6 +485,70 @@ class BusinessEngine:
             "clients": client_stats,
             "jobs": job_stats,
         }
+
+    def _get_state_summary(self) -> str:
+        """Builds a concise plain-text summary of the current business state for LLM planning."""
+        lines = []
+        try:
+            job_stats = self.scraper.get_stats()
+            lines.append(
+                f"Jobs: {job_stats.get('total', 0)} total, "
+                f"{job_stats.get('new', 0)} unevaluated, "
+                f"{job_stats.get('high_score', 0)} high-score (>=60)"
+            )
+        except Exception:
+            lines.append("Jobs: stats unavailable")
+
+        try:
+            prop_stats = self.proposals.get_stats()
+            lines.append(
+                f"Proposals: {prop_stats.get('total', 0)} total, "
+                f"{prop_stats.get('sent_today', 0)} sent today, "
+                f"daily limit reached: {not self.proposals.can_send_more()}"
+            )
+        except Exception:
+            lines.append("Proposals: stats unavailable")
+
+        try:
+            proj_stats = self.project_mgr.get_stats()
+            lines.append(
+                f"Projects: {proj_stats.get('active', 0)} in-progress, "
+                f"{proj_stats.get('accepted', 0)} accepted, "
+                f"{proj_stats.get('total', 0)} total"
+            )
+        except Exception:
+            lines.append("Projects: stats unavailable")
+
+        try:
+            rev = self.invoices.get_revenue_summary()
+            overdue = len(self.invoices.get_overdue())
+            lines.append(
+                f"Revenue: ${rev.get('total_revenue', 0):.2f} total, "
+                f"{overdue} overdue invoices"
+            )
+        except Exception:
+            lines.append("Revenue: stats unavailable")
+
+        lines.append(f"Actions executed this session: {self._actions_executed}")
+        return "\n".join(lines)
+
+    def _parse_json_safe(self, response) -> dict:
+        """Safely parses an LLM response string into a dict."""
+        import json
+        if isinstance(response, dict):
+            return response
+        text = str(response).strip()
+        if "```json" in text:
+            text = text.split("```json", 1)[1].split("```", 1)[0]
+        elif "```" in text:
+            text = text.split("```", 1)[1].split("```", 1)[0]
+        text = text.strip()
+        # Find first { ... }
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1:
+            text = text[start:end + 1]
+        return json.loads(text)
 
     def _get_relevant_repos(self, job: dict) -> List[str]:
         """Finds relevant GitHub repos to include in proposals."""

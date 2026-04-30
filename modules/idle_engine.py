@@ -69,6 +69,9 @@ class IdleEngine:
         # GUI callback for real-time idle log broadcasting
         self._gui_callback = None
 
+        # Last plan produced — surfaced in get_status()
+        self._last_plan: Optional[Dict[str, Any]] = None
+
     def set_gui_callback(self, callback):
         """Set a callback function to broadcast idle events to the GUI."""
         self._gui_callback = callback
@@ -218,106 +221,144 @@ class IdleEngine:
                 self._sleep_interruptible(120)  # Back off on error
 
     def _execute_idle_action(self):
-        """Triggers a GitHub presence or Business action based on configured weights."""
-        # Determine whether to run a business or github action
+        """Entry point: runs the full PLAN → EXECUTE → REVIEW cycle."""
+        self._plan_then_execute()
+
+    def _plan_then_execute(self):
+        """
+        3-Stage deliberate idle cycle:
+
+        STAGE 1 — PLAN
+            Ask the LLM (via BusinessEngine or GitHubPresence) what the single
+            best action is given the current state. Reasoning is logged and
+            broadcast to the GUI.
+
+        STAGE 2 — EXECUTE
+            Run the chosen action handler with the plan context.
+
+        STAGE 3 — REVIEW
+            Ask the LLM to evaluate the outcome. Store the reflection in
+            semantic memory so future planning cycles can learn from it.
+        """
+        # Determine domain (business vs github) by weight
         use_business = (
-            self._business_weight > 0 and
-            hasattr(self.sai, 'business_engine') and
-            random.randint(1, 100) <= self._business_weight
+            self._business_weight > 0
+            and hasattr(self.sai, 'business_engine')
+            and random.randint(1, 100) <= self._business_weight
         )
+        domain = "business" if use_business else "github"
 
-        if use_business:
-            self._execute_business_action()
-        else:
-            self._execute_github_action()
+        # ── STAGE 1: PLAN ──────────────────────────────────────────────────
+        self.logger.info("SAI is idle — [PLAN] choosing best %s action...", domain)
+        self._broadcast("plan_start", {"domain": domain})
 
-    def _execute_github_action(self):
-        """Triggers a GitHub presence action."""
-        if not hasattr(self.sai, 'github_presence'):
-            self.logger.warning("GitHubPresence module not initialized. Skipping.")
-            return
-
-        self.logger.info("SAI is idle — executing autonomous GitHub action...")
-        self._action_in_progress = True
-        self._broadcast("action_start", {"message": "Executing autonomous GitHub action..."})
+        plan = {}
         try:
-            result = self.sai.github_presence.run_idle_action()
+            if use_business:
+                plan = self.sai.business_engine.plan_action()
+            elif hasattr(self.sai, 'github_presence'):
+                plan = self.sai.github_presence.plan_action()
+        except Exception as e:
+            self.logger.warning("[PLAN] Planning call failed: %s", e)
+            plan = {"action": "", "reasoning": f"planning_error: {e}"}
+
+        self._last_plan = plan
+        action_name = plan.get("action", "unknown")
+        reasoning = plan.get("reasoning", "")
+
+        self.logger.info(
+            "[PLAN] %s action decided: '%s' — %s",
+            domain.upper(), action_name, str(reasoning)[:150],
+        )
+        self._broadcast("plan_complete", {
+            "domain": domain,
+            "action": action_name,
+            "reasoning": str(reasoning)[:200],
+        })
+
+        # ── STAGE 2: EXECUTE ───────────────────────────────────────────────
+        self.logger.info("[EXECUTE] Running %s action: %s", domain, action_name)
+        self._action_in_progress = True
+        self._broadcast("action_start", {
+            "message": f"Executing {domain} action: {action_name}",
+            "planned": True,
+        })
+
+        result = {}
+        try:
+            if use_business:
+                result = self.sai.business_engine.run_business_action(
+                    planned_action=action_name
+                )
+            elif hasattr(self.sai, 'github_presence'):
+                result = self.sai.github_presence.run_idle_action(plan=plan)
+            else:
+                result = {"status": "skipped", "reason": "no_module_available"}
+
             self._actions_executed += 1
             self._last_action_time = time.time()
 
-            action = result.get("action", "unknown")
-            status = result.get("status", "unknown")
-            
-            # Extract additional context for logging
+            status = result.get("status", "unknown") if isinstance(result, dict) else "unknown"
             extra_msg = ""
-            if status == "skipped" and "reason" in result:
+            if status == "skipped" and isinstance(result, dict) and "reason" in result:
                 extra_msg = f" (Reason: {result['reason']})"
-            elif status == "error" and "message" in result:
+            elif status == "error" and isinstance(result, dict) and "message" in result:
                 extra_msg = f" (Error: {result['message']})"
-                
-            self.logger.info(
-                "Idle action completed: %s [%s]%s (total: %d)",
-                action, status, extra_msg, self._actions_executed
-            )
 
+            self.logger.info(
+                "[EXECUTE] %s action '%s' completed [%s]%s (total: %d)",
+                domain.upper(), action_name, status, extra_msg, self._actions_executed,
+            )
             self._broadcast("action_complete", {
-                "action": action,
+                "action": f"{domain}:{action_name}",
                 "status": status,
                 "detail": extra_msg,
                 "total": self._actions_executed,
-                "result_summary": result.get("summary", result.get("reason", ""))[:200],
+                "result_summary": str(result.get("result", result.get("reason", "")))[:200],
             })
 
-            # Publish event
             if hasattr(self.sai, 'event_bus'):
-                self.sai.event_bus.publish("idle_action_executed", {
-                    "action": action,
+                self.sai.event_bus.publish(f"{domain}_action_executed", {
+                    "action": action_name,
                     "status": status,
                     "result": result,
-                    "total_actions": self._actions_executed
+                    "total_actions": self._actions_executed,
+                    "plan": plan,
                 })
 
         except Exception as e:
-            self.logger.error("Failed to execute idle action: %s", e)
+            self.logger.error("[EXECUTE] %s action '%s' failed: %s", domain, action_name, e)
+            result = {"status": "error", "message": str(e)}
             self._broadcast("action_error", {"error": str(e)})
         finally:
             self._action_in_progress = False
 
-    def _execute_business_action(self):
-        """Triggers a Business Engine action."""
-        self.logger.info("SAI is idle — executing autonomous business action...")
-        self._action_in_progress = True
-        self._broadcast("action_start", {"message": "Executing autonomous business action..."})
+        # ── STAGE 3: REVIEW ────────────────────────────────────────────────
+        self.logger.info("[REVIEW] Evaluating outcome of '%s'...", action_name)
+        self._broadcast("review_start", {"action": action_name, "domain": domain})
+
+        review = {}
         try:
-            result = self.sai.business_engine.run_business_action()
-            self._actions_executed += 1
-            self._last_action_time = time.time()
-
-            action = result.get("action", "unknown")
-            status = result.get("status", "unknown")
-
-            self.logger.info(
-                "Business action completed: %s [%s] (total: %d)",
-                action, status, self._actions_executed
-            )
-
-            self._broadcast("action_complete", {
-                "action": f"business:{action}",
-                "status": status,
-                "total": self._actions_executed,
-                "result_summary": str(result.get("result", ""))[:200],
-            })
-
-            if hasattr(self.sai, 'event_bus'):
-                self.sai.event_bus.publish("business_action_executed", {
-                    "action": action, "status": status, "result": result
-                })
-
+            if use_business and hasattr(self.sai, 'business_engine'):
+                review = self.sai.business_engine.review_action(action_name, result)
+            elif hasattr(self.sai, 'github_presence'):
+                review = self.sai.github_presence.review_action(action_name, result)
         except Exception as e:
-            self.logger.error("Failed to execute business action: %s", e)
-            self._broadcast("action_error", {"error": str(e)})
-        finally:
-            self._action_in_progress = False
+            self.logger.debug("[REVIEW] Review call failed: %s", e)
+            review = {"success": False, "lessons": str(e), "next_recommendation": ""}
+
+        self.logger.info(
+            "[REVIEW] '%s' — success=%s | next: %s",
+            action_name,
+            review.get("success"),
+            str(review.get("next_recommendation", ""))[:80],
+        )
+        self._broadcast("review_complete", {
+            "action": action_name,
+            "success": review.get("success"),
+            "lessons": str(review.get("lessons", ""))[:200],
+            "next_recommendation": str(review.get("next_recommendation", ""))[:100],
+        })
 
     def _execute_pending_work(self):
         """Resumes interrupted pending work from GitHubPresence."""
@@ -390,6 +431,8 @@ class IdleEngine:
             "sai_is_idle": not self.sai.is_running,
             "business_weight_pct": self._business_weight,
             "github_weight_pct": 100 - self._business_weight,
+            # Last plan produced by PLAN stage
+            "last_plan": self._last_plan,
         }
 
         # Add business engine status if available

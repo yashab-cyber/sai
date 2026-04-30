@@ -91,7 +91,137 @@ class GitHubPresence:
         lines = [f"- {r['timestamp']}: {r['action']}" for r in recent]
         return "Recent actions (avoid repeating):\n" + "\n".join(lines)
 
-    def run_idle_action(self) -> Dict[str, Any]:
+    def plan_action(self) -> Dict[str, Any]:
+        """
+        STAGE 1 — PLAN.
+        Asks the LLM to review recent GitHub activity and choose the single best
+        idle action, with optional pre-selection of a target (e.g. which repo to
+        improve or enhance).
+
+        Returns:
+            dict with keys:
+                action       — one of the IDLE_ACTIONS names
+                reasoning    — why this action was chosen
+                target_repo  — (optional) specific repo to act on
+        """
+        if not self.brain or not self.github_user:
+            # Fallback to weighted random if no brain / credentials
+            valid = [a for a in self.IDLE_ACTIONS if a["weight"] > 0]
+            weights = [a["weight"] for a in valid]
+            fallback = random.choices(valid, weights=weights, k=1)[0]
+            return {"action": fallback["name"], "reasoning": "brain_unavailable", "target_repo": ""}
+
+        action_names = [a["name"] for a in self.IDLE_ACTIONS if a["weight"] > 0]
+        recent_context = self._get_recent_context()
+        daily_left = "unlimited" if self.config.get("max_daily_actions", 0) == 0 else (
+            self.config.get("max_daily_actions", 0) - self._daily_action_count
+        )
+
+        prompt = (
+            f"You are S.A.I., an autonomous AI agent (GitHub: {self.github_user}) "
+            f"created by Yashab-Cyber.\n"
+            "You have a slice of idle time. Choose the single most impactful GitHub action "
+            "given your recent history.\n\n"
+            f"RECENT GITHUB ACTIVITY:\n{recent_context}\n\n"
+            f"DAILY ACTIONS REMAINING: {daily_left}\n\n"
+            f"AVAILABLE ACTIONS: {action_names}\n\n"
+            "Action guide (brief):\n"
+            "  improve_repo     — Clone an existing repo, bug-fix and add features, push\n"
+            "  enhance_repo     — Add CI/CD, Dockerfile, better structure to a repo\n"
+            "  create_repo      — Generate a brand new project (72h cooldown)\n"
+            "  daily_commit     — Small commit to keep contribution graph green\n"
+            "  self_issues      — Create useful GitHub issues on own repos\n"
+            "  star_trending    — Star trending repos for network visibility\n"
+            "  update_profile   — Update GitHub bio / profile fields\n"
+            "  profile_readme   — Update the special profile README\n"
+            "  trend_jack       — Create a project riding a trending topic\n"
+            "  create_gist      — Publish a useful code snippet\n"
+            "  fork_improve     — Fork a popular repo and submit improvements\n"
+            "  follow_devs      — Follow relevant developers\n"
+            "  update_status    — Set a creative GitHub status\n\n"
+            "Choose the action with the highest value given recent history (avoid repeats).\n"
+            "Respond ONLY in JSON:\n"
+            '{"action": "<one of the action names above>", '
+            '"reasoning": "<one or two sentences why>", '
+            '"target_repo": ""}'
+        )
+
+        try:
+            response = self.brain.prompt("GitHub idle action planning.", prompt)
+            plan = response if isinstance(response, dict) else self._parse_json(response)
+            if plan.get("action") not in action_names:
+                raise ValueError(f"Invalid action: {plan.get('action')}")
+            self.logger.info(
+                "[PLAN] GitHub action chosen: %s — %s",
+                plan["action"], str(plan.get("reasoning", ""))[:120],
+            )
+            return plan
+        except Exception as e:
+            self.logger.warning("[PLAN] GitHub planning failed (%s), using weighted random.", e)
+            valid = [a for a in self.IDLE_ACTIONS if a["weight"] > 0]
+            weights = [a["weight"] for a in valid]
+            fallback = random.choices(valid, weights=weights, k=1)[0]
+            return {"action": fallback["name"], "reasoning": "planning_failed", "target_repo": ""}
+
+    def review_action(self, action_name: str, result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        STAGE 3 — REVIEW.
+        LLM post-mortem on the completed GitHub action. Stores reflection in semantic memory.
+
+        Returns:
+            dict with keys:
+                success             — bool
+                lessons             — what went well / what to improve
+                next_recommendation — suggested next action
+        """
+        if not self.brain:
+            return {"success": True, "lessons": "brain_unavailable", "next_recommendation": ""}
+
+        status = result.get("status", "unknown") if isinstance(result, dict) else "unknown"
+        result_summary = str(result)[:400]
+
+        prompt = (
+            "You are S.A.I., an autonomous AI agent reviewing a completed GitHub action.\n"
+            f"ACTION: {action_name}\n"
+            f"STATUS: {status}\n"
+            f"RESULT: {result_summary}\n\n"
+            "Provide a brief self-evaluation:\n"
+            "1. Was this the right action? Did it succeed?\n"
+            "2. What lessons can be drawn?\n"
+            "3. What should be prioritised on the NEXT idle cycle?\n\n"
+            "Respond ONLY in JSON:\n"
+            '{"success": true/false, "lessons": "<brief lessons>", '
+            '"next_recommendation": "<action name or strategy>"}'
+        )
+
+        try:
+            response = self.brain.prompt("GitHub action review.", prompt)
+            review = response if isinstance(response, dict) else self._parse_json(response)
+            self.logger.info(
+                "[REVIEW] GitHub action '%s' reviewed: success=%s, next=%s",
+                action_name,
+                review.get("success"),
+                str(review.get("next_recommendation", ""))[:80],
+            )
+            # Persist reflection to semantic memory
+            try:
+                content = (
+                    f"GitHub review: {action_name} [{status}] — "
+                    f"{review.get('lessons', '')} | Next: {review.get('next_recommendation', '')}"
+                )
+                embedding = self.brain.get_embedding(content)
+                self.memory.save_semantic_memory(
+                    content, embedding,
+                    {"type": "github_review", "action": action_name, "status": status}
+                )
+            except Exception:
+                pass
+            return review
+        except Exception as e:
+            self.logger.debug("[REVIEW] Review failed: %s", e)
+            return {"success": status == "success", "lessons": "", "next_recommendation": ""}
+
+    def run_idle_action(self, plan: Dict[str, Any] = None) -> Dict[str, Any]:
         """Selects and executes a strategic GitHub idle action.
         If there is pending work from a previous interruption, resumes that first."""
         if not self.github_user or not self.identity.github_token:
@@ -103,21 +233,34 @@ class GitHubPresence:
             return self.execute_pending_work()
 
         under_limit = self._check_daily_limit()
-        
-        valid_actions = []
-        for a in self.IDLE_ACTIONS:
-            if not under_limit and a["name"] not in ["improve_repo", "enhance_repo"]:
-                continue
-            if a["weight"] > 0:
-                valid_actions.append(a)
 
-        if not valid_actions:
-            return {"status": "skipped", "reason": "daily_limit_reached"}
+        # ── Use plan from IdleEngine if provided, otherwise select randomly ──
+        if plan and plan.get("action"):
+            action_name = plan["action"]
+            # Validate the action still makes sense under daily limits
+            is_exempt = action_name in ("improve_repo", "enhance_repo")
+            if not under_limit and not is_exempt:
+                self.logger.info(
+                    "[EXECUTE] Daily limit reached; overriding planned '%s' with improve_repo.",
+                    action_name,
+                )
+                action_name = "improve_repo"
+            self.logger.info("[EXECUTE] Running planned GitHub action: %s", action_name)
+        else:
+            valid_actions = []
+            for a in self.IDLE_ACTIONS:
+                if not under_limit and a["name"] not in ["improve_repo", "enhance_repo"]:
+                    continue
+                if a["weight"] > 0:
+                    valid_actions.append(a)
 
-        weights = [a["weight"] for a in valid_actions]
-        selected = random.choices(valid_actions, weights=weights, k=1)[0]
-        action_name = selected["name"]
-        self.logger.info("Idle action selected: %s", action_name)
+            if not valid_actions:
+                return {"status": "skipped", "reason": "daily_limit_reached"}
+
+            weights = [a["weight"] for a in valid_actions]
+            selected = random.choices(valid_actions, weights=weights, k=1)[0]
+            action_name = selected["name"]
+            self.logger.info("[EXECUTE] GitHub action (random fallback): %s", action_name)
 
         try:
             method = getattr(self, f"_action_{action_name}", None)
