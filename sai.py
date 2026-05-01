@@ -104,7 +104,8 @@ class SAI:
             headless=browser_config.get('headless', True),
             timeout=int(browser_config.get('timeout', 30000)),
             locale=browser_config.get('locale', "en-US"),
-            timezone=browser_config.get('timezone', "UTC")
+            timezone=browser_config.get('timezone', "UTC"),
+            brain=self.brain,
         )
         self.gui = GUIManager(self)
         self.system = SystemManager(self.executor)

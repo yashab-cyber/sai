@@ -61,8 +61,31 @@ class SelfAdaptationEngine:
             # Successful action resets cumulative counter
             self._cumulative_fails = 0
 
-        # Break on 2 identical consecutive OR 4 cumulative failures
-        if self._consecutive_same >= 2:
+        # Tools that are legitimately called many times in a row for the same task
+        REPETITION_EXEMPT = {
+            "github.presence", "email.send", "email.read", "email.read_unread",
+            "browser.navigate", "browser.search", "browser.scrape",
+        }
+
+        # Break on 4 identical consecutive (raised from 2) — but exempt multi-call tools
+        # unless they are also failing (stuck + failing = real loop)
+        loop_threshold = 4
+        if tool_name in REPETITION_EXEMPT:
+            # Only flag a loop if the tool is ALSO producing errors repeatedly
+            if self._consecutive_same >= loop_threshold and is_action_failed:
+                self.logger.warning(
+                    "Detected a failing loop on exempt tool '%s' (%d consecutive failures).",
+                    tool_name, self._consecutive_same,
+                )
+                return {
+                    "strategy": "LOOP_BREAK",
+                    "message": (
+                        f"Sir, '{tool_name}' has failed {self._consecutive_same} times in a row. "
+                        "I'd recommend we reassess the approach."
+                    ),
+                    "thought": "Repeated failures on the same tool detected, sir. Awaiting new directive.",
+                }
+        elif self._consecutive_same >= loop_threshold:
             self.logger.warning("Detected a tactical loop. Identical consecutive actions: %d", self._consecutive_same)
             return {
                 "strategy": "LOOP_BREAK",
@@ -70,7 +93,7 @@ class SelfAdaptationEngine:
                     "Sir, I appear to be caught in a loop — repeating the same action without progress. "
                     "I'd recommend we reassess the approach."
                 ),
-                "thought": "I've detected a tactical loop, sir. The same action has failed consecutively. Awaiting new directive."
+                "thought": "I've detected a tactical loop, sir. The same action has been repeated without progress. Awaiting new directive.",
             }
 
         if self._cumulative_fails >= 4:

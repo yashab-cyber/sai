@@ -153,6 +153,7 @@ class IdentityManager:
         Endpoint should be relative to https://api.github.com/ (e.g., 'user', 'user/repos')
         """
         if not self.github_token:
+            self.logger.error("GitHub API call BLOCKED — no token configured. endpoint=%s", endpoint)
             return {"status": "error", "message": "GitHub credentials missing in .env"}
 
         url = f"https://api.github.com/{endpoint.lstrip('/')}"
@@ -160,7 +161,9 @@ class IdentityManager:
             "Authorization": f"Bearer {self.github_token}",
             "Accept": "application/vnd.github.v3+json"
         }
-        
+
+        self.logger.info("GitHub API → %s %s", method.upper(), endpoint)
+
         try:
             method = method.upper()
             if method == "GET":
@@ -182,8 +185,15 @@ class IdentityManager:
                 response_json = {"raw_text": response.text}
 
             if response.status_code >= 400:
+                self.logger.error(
+                    "GitHub API ✗ %s %s → HTTP %d | %s",
+                    method, endpoint, response.status_code,
+                    str(response_json)[:300],
+                )
                 return {"status": "error", "code": response.status_code, "response": response_json}
-                
+
+            self.logger.info("GitHub API ✓ %s %s → HTTP %d", method, endpoint, response.status_code)
             return {"status": "success", "code": response.status_code, "data": response_json}
         except Exception as e:
+            self.logger.error("GitHub API exception %s %s → %s", method, endpoint, e)
             return {"status": "error", "message": str(e)}

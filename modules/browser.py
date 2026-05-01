@@ -2,6 +2,7 @@ import asyncio
 import logging
 from playwright.async_api import async_playwright
 from typing import Dict, Any, Optional
+from modules.captcha_solver import CaptchaSolver, make_stealth_context
 
 class BrowserManager:
     """
@@ -9,43 +10,42 @@ class BrowserManager:
     Supports navigation, interaction, and visual analysis.
     """
     
-    def __init__(self, headless: bool = True, timeout: int = 60000, locale: str = "en-US", timezone: str = "UTC"):
+    def __init__(self, headless: bool = True, timeout: int = 60000,
+                 locale: str = "en-US", timezone: str = "UTC", brain=None):
         self.logger = logging.getLogger("SAI.Browser")
         self.headless = headless
         self.timeout = timeout
         self.locale = locale
         self.timezone = timezone
-        
+        self.brain = brain
+
         self.playwright = None
         self.browser = None
         self.context = None
         self.page = None
+        self.captcha_solver: Optional[CaptchaSolver] = None
 
     async def _ensure_browser(self):
-        """Lazy initialization of the browser."""
+        """Lazy initialization of the browser with stealth fingerprinting."""
         if not self.playwright:
-            self.logger.info("Initializing Async Playwright")
+            self.logger.info("Initializing Async Playwright (stealth mode)")
             self.playwright = await async_playwright().start()
-            self.browser = await self.playwright.chromium.launch(headless=self.headless)
-            
-            # Use a modern human identity to bypass bot detection
-            user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
-            
-            self.context = await self.browser.new_context(
-                viewport={'width': 1280, 'height': 720},
-                user_agent=user_agent,
+            self.browser, self.context = await make_stealth_context(
+                self.playwright,
+                headless=self.headless,
                 locale=self.locale,
-                timezone_id=self.timezone
+                timezone=self.timezone,
             )
             self.page = await self.context.new_page()
             self.page.set_default_timeout(self.timeout)
+            # Attach CAPTCHA solver
+            self.captcha_solver = CaptchaSolver(self, brain=self.brain)
+            self.logger.info("Browser ready (stealth + CAPTCHA solver attached)")
 
     async def navigate(self, url: str, wait_until: str = "domcontentloaded"):
         """
-        Navigates to a URL.
-
+        Navigates to a URL, then auto-detects and solves any CAPTCHA.
         Uses 'domcontentloaded' by default (works on SPAs like Upwork).
-        Falls back to 'load' if that also times out before raising.
         """
         try:
             await self._ensure_browser()
@@ -53,9 +53,23 @@ class BrowserManager:
             try:
                 await self.page.goto(url, wait_until=wait_until, timeout=self.timeout)
             except Exception:
-                # Fallback: settle for 'load' event (fires even on heavy SPAs)
                 self.logger.info("domcontentloaded timed out, retrying with 'load'...")
                 await self.page.goto(url, wait_until="load", timeout=self.timeout)
+
+            # ── Auto-solve CAPTCHA if one appeared ──
+            if self.captcha_solver:
+                captcha_result = await self.captcha_solver.solve_if_present()
+                if captcha_result.get("type") and not captcha_result.get("solved"):
+                    self.logger.warning(
+                        "CAPTCHA '%s' could not be solved automatically (method: %s)",
+                        captcha_result["type"], captcha_result.get("method"),
+                    )
+                elif captcha_result.get("type"):
+                    self.logger.info(
+                        "CAPTCHA '%s' solved via %s",
+                        captcha_result["type"], captcha_result.get("method"),
+                    )
+
             return {"status": "success", "title": await self.page.title(), "url": self.page.url}
         except Exception as e:
             self.logger.error(f"Navigation failed: {e}")
