@@ -2,11 +2,15 @@
 S.A.I. Idle Behavior Engine.
 
 Background daemon that activates when S.A.I. has no active user task.
-Triggers autonomous GitHub presence actions at configurable intervals.
+Triggers autonomous GitHub presence and business actions at configurable intervals.
 
-Supports pause/resume: when a user command arrives mid-idle-action,
-the engine saves its state, yields to the user task, and resumes
-its work after the user task completes.
+Key behavior:
+  - When SAI picks a domain (business or github), it COMPLETES the full task
+    sequence before switching domains. The REVIEW stage's next_recommendation
+    is followed until the task is logically done.
+  - Supports pause/resume: when a user command arrives mid-idle-action,
+    the engine saves its state, yields to the user task, and resumes
+    its work after the user task completes.
 """
 
 import time
@@ -21,11 +25,11 @@ from typing import Dict, Any, Optional
 class IdleEngine:
     """
     Background daemon that monitors SAI's idle state and triggers
-    autonomous GitHub presence actions when the system is not busy.
+    autonomous GitHub presence and business actions when the system is not busy.
 
-    Supports interruption: if a user task arrives, the engine pauses
-    gracefully, saves what it was doing to memory, and resumes after
-    the user task completes.
+    Task Continuity: Once a domain (business/github) is selected, the engine
+    follows through on the REVIEW stage's next_recommendation to complete the
+    full logical workflow before switching domains.
     """
 
     def __init__(self, sai_instance, config: dict = None):
@@ -71,6 +75,13 @@ class IdleEngine:
 
         # Last plan produced — surfaced in get_status()
         self._last_plan: Optional[Dict[str, Any]] = None
+
+        # ── Task Continuity State ──
+        # Tracks the active domain and pending next action from REVIEW
+        self._active_domain: Optional[str] = None          # "business" or "github"
+        self._next_recommendation: Optional[str] = None    # Action name from REVIEW
+        self._domain_action_count = 0                       # Actions executed in current domain run
+        self._max_domain_actions = int(self.config.get("max_domain_actions", 5))  # Max sequential actions before forcing domain switch
 
     def set_gui_callback(self, callback):
         """Set a callback function to broadcast idle events to the GUI."""
@@ -122,12 +133,16 @@ class IdleEngine:
         self._paused = True
         self._pause_event.clear()  # Block the idle loop
 
-        # Save interrupted state
+        # Save interrupted state including task continuity
         state = {
             "paused_at": datetime.now().isoformat(),
             "action_was_in_progress": self._action_in_progress,
             "actions_executed_before_pause": self._actions_executed,
             "last_action_time": self._last_action_time,
+            # Task continuity state — so we can resume the same domain
+            "active_domain": self._active_domain,
+            "next_recommendation": self._next_recommendation,
+            "domain_action_count": self._domain_action_count,
         }
 
         # Ask GitHubPresence for its pending work if it has any
@@ -138,8 +153,9 @@ class IdleEngine:
 
         self._interrupted_state = state
         self.logger.info(
-            "Idle engine PAUSED — user task has priority. State saved: %s",
-            json.dumps(state, default=str)[:300]
+            "Idle engine PAUSED — user task has priority. Active domain: %s, Next: %s. State saved.",
+            self._active_domain or "none",
+            self._next_recommendation or "none",
         )
 
         # Persist to semantic memory for cross-session recall
@@ -148,7 +164,7 @@ class IdleEngine:
     def resume(self):
         """
         Resumes the idle engine after a user task completes.
-        Restores saved state and continues where it left off.
+        Restores saved state including the active domain and pending recommendation.
         """
         if not self._paused:
             return  # Not paused
@@ -163,6 +179,20 @@ class IdleEngine:
                 "Idle engine RESUMING — user task complete. Restoring state from %s",
                 saved_state.get("paused_at", "unknown")
             )
+
+            # Restore task continuity state
+            self._active_domain = saved_state.get("active_domain")
+            self._next_recommendation = saved_state.get("next_recommendation")
+            self._domain_action_count = saved_state.get("domain_action_count", 0)
+
+            if self._active_domain:
+                self.logger.info(
+                    "Resuming domain '%s' — next action: %s (step %d/%d)",
+                    self._active_domain,
+                    self._next_recommendation or "from plan",
+                    self._domain_action_count,
+                    self._max_domain_actions,
+                )
 
             # Restore pending work to GitHubPresence
             pending_work = saved_state.get("pending_work")
@@ -207,9 +237,20 @@ class IdleEngine:
                 if not self.sai.is_running:
                     self._execute_idle_action()
 
-                    # Random cooldown between actions
-                    cooldown = random.randint(self._min_cooldown, self._max_cooldown)
-                    self.logger.info("Next idle action in %d seconds.", cooldown)
+                    # Cooldown between actions (shorter if continuing same domain)
+                    if self._active_domain and self._next_recommendation:
+                        # Short cooldown — we're continuing a task sequence
+                        cooldown = max(5, self._min_cooldown // 3)
+                        self.logger.info(
+                            "Continuing %s domain (step %d/%d). Short cooldown: %ds.",
+                            self._active_domain, self._domain_action_count,
+                            self._max_domain_actions, cooldown,
+                        )
+                    else:
+                        # Normal cooldown — task sequence complete, next iteration will pick new domain
+                        cooldown = random.randint(self._min_cooldown, self._max_cooldown)
+                        self.logger.info("Task sequence complete. Next idle action in %d seconds.", cooldown)
+
                     self._broadcast("next_cooldown", {"seconds": cooldown})
                     self._sleep_interruptible(cooldown)
                 else:
@@ -218,46 +259,77 @@ class IdleEngine:
 
             except Exception as e:
                 self.logger.error("Idle engine error: %s", e)
+                self._reset_domain_state()
                 self._sleep_interruptible(120)  # Back off on error
 
     def _execute_idle_action(self):
-        """Entry point: runs the full PLAN → EXECUTE → REVIEW cycle."""
+        """Entry point: runs the full PLAN → EXECUTE → REVIEW cycle with task continuity."""
         self._plan_then_execute()
 
     def _plan_then_execute(self):
         """
-        3-Stage deliberate idle cycle:
+        3-Stage deliberate idle cycle with TASK CONTINUITY:
 
         STAGE 1 — PLAN
-            Ask the LLM (via BusinessEngine or GitHubPresence) what the single
-            best action is given the current state. Reasoning is logged and
-            broadcast to the GUI.
+            If we have an active domain with a next_recommendation from the
+            previous REVIEW, use that instead of picking a new random domain.
+            Otherwise, pick a domain (business vs github) by weight.
 
         STAGE 2 — EXECUTE
             Run the chosen action handler with the plan context.
 
         STAGE 3 — REVIEW
-            Ask the LLM to evaluate the outcome. Store the reflection in
-            semantic memory so future planning cycles can learn from it.
+            Ask the LLM to evaluate the outcome. If the review recommends a
+            follow-up action in the same domain, store it so the next iteration
+            continues instead of switching.
         """
-        # Determine domain (business vs github) by weight
-        use_business = (
-            self._business_weight > 0
-            and hasattr(self.sai, 'business_engine')
-            and random.randint(1, 100) <= self._business_weight
-        )
-        domain = "business" if use_business else "github"
+        # ─── Determine domain ─────────────────────────────────────────────
+
+        # If we have an active domain from a previous cycle, continue it
+        if self._active_domain and self._domain_action_count < self._max_domain_actions:
+            domain = self._active_domain
+            forced_action = self._next_recommendation
+            self.logger.info(
+                "[CONTINUITY] Continuing %s domain — step %d/%d, recommended action: %s",
+                domain, self._domain_action_count + 1, self._max_domain_actions,
+                forced_action or "from plan",
+            )
+        else:
+            # Fresh start — pick domain by weight
+            if self._active_domain:
+                self.logger.info(
+                    "[CONTINUITY] Domain '%s' completed after %d actions. Switching.",
+                    self._active_domain, self._domain_action_count,
+                )
+            self._reset_domain_state()
+
+            use_business = (
+                self._business_weight > 0
+                and hasattr(self.sai, 'business_engine')
+                and random.randint(1, 100) <= self._business_weight
+            )
+            domain = "business" if use_business else "github"
+            forced_action = None
+            self._active_domain = domain
+            self._domain_action_count = 0
 
         # ── STAGE 1: PLAN ──────────────────────────────────────────────────
         self.logger.info("SAI is idle — [PLAN] choosing best %s action...", domain)
-        self._broadcast("plan_start", {"domain": domain})
+        self._broadcast("plan_start", {"domain": domain, "is_continuation": forced_action is not None})
 
         plan = {}
         try:
-            if use_business:
-                plan = self.sai.business_engine.plan_action()
+            if domain == "business" and hasattr(self.sai, 'business_engine'):
+                if forced_action:
+                    # Use the recommendation from previous REVIEW instead of re-planning
+                    plan = {"action": forced_action, "reasoning": f"Follow-up from previous review (step {self._domain_action_count + 1})"}
+                else:
+                    plan = self.sai.business_engine.plan_action()
             elif hasattr(self.sai, 'github_presence'):
-                plan = self.sai.github_presence.plan_action()
+                if forced_action:
+                    plan = {"action": forced_action, "reasoning": f"Follow-up from previous review (step {self._domain_action_count + 1})"}
+                else:
+                    plan = self.sai.github_presence.plan_action()
         except Exception as e:
             self.logger.warning("[PLAN] Planning call failed: %s", e)
             plan = {"action": "", "reasoning": f"planning_error: {e}"}
@@ -266,27 +338,38 @@ class IdleEngine:
         action_name = plan.get("action", "unknown")
         reasoning = plan.get("reasoning", "")
 
-        self.logger.info(
-            "[PLAN] %s action decided: '%s' — %s",
-            domain.upper(), action_name, str(reasoning)[:150],
-        )
+        # Validate the forced action is actually available
+        if forced_action and action_name == forced_action:
+            self.logger.info(
+                "[PLAN] %s continuation: '%s' — %s",
+                domain.upper(), action_name, str(reasoning)[:150],
+            )
+        else:
+            self.logger.info(
+                "[PLAN] %s action decided: '%s' — %s",
+                domain.upper(), action_name, str(reasoning)[:150],
+            )
+
         self._broadcast("plan_complete", {
             "domain": domain,
             "action": action_name,
             "reasoning": str(reasoning)[:200],
+            "is_continuation": forced_action is not None,
+            "domain_step": self._domain_action_count + 1,
         })
 
         # ── STAGE 2: EXECUTE ───────────────────────────────────────────────
-        self.logger.info("[EXECUTE] Running %s action: %s", domain, action_name)
+        self.logger.info("[EXECUTE] Running %s action: %s (step %d)", domain, action_name, self._domain_action_count + 1)
         self._action_in_progress = True
         self._broadcast("action_start", {
             "message": f"Executing {domain} action: {action_name}",
             "planned": True,
+            "domain_step": self._domain_action_count + 1,
         })
 
         result = {}
         try:
-            if use_business:
+            if domain == "business" and hasattr(self.sai, 'business_engine'):
                 result = self.sai.business_engine.run_business_action(
                     planned_action=action_name
                 )
@@ -296,6 +379,7 @@ class IdleEngine:
                 result = {"status": "skipped", "reason": "no_module_available"}
 
             self._actions_executed += 1
+            self._domain_action_count += 1
             self._last_action_time = time.time()
 
             status = result.get("status", "unknown") if isinstance(result, dict) else "unknown"
@@ -306,14 +390,17 @@ class IdleEngine:
                 extra_msg = f" (Error: {result['message']})"
 
             self.logger.info(
-                "[EXECUTE] %s action '%s' completed [%s]%s (total: %d)",
-                domain.upper(), action_name, status, extra_msg, self._actions_executed,
+                "[EXECUTE] %s action '%s' completed [%s]%s (step %d/%d, total: %d)",
+                domain.upper(), action_name, status, extra_msg,
+                self._domain_action_count, self._max_domain_actions,
+                self._actions_executed,
             )
             self._broadcast("action_complete", {
                 "action": f"{domain}:{action_name}",
                 "status": status,
                 "detail": extra_msg,
                 "total": self._actions_executed,
+                "domain_step": self._domain_action_count,
                 "result_summary": str(result.get("result", result.get("reason", "")))[:200],
             })
 
@@ -324,6 +411,7 @@ class IdleEngine:
                     "result": result,
                     "total_actions": self._actions_executed,
                     "plan": plan,
+                    "domain_step": self._domain_action_count,
                 })
 
         except Exception as e:
@@ -339,7 +427,7 @@ class IdleEngine:
 
         review = {}
         try:
-            if use_business and hasattr(self.sai, 'business_engine'):
+            if domain == "business" and hasattr(self.sai, 'business_engine'):
                 review = self.sai.business_engine.review_action(action_name, result)
             elif hasattr(self.sai, 'github_presence'):
                 review = self.sai.github_presence.review_action(action_name, result)
@@ -347,18 +435,125 @@ class IdleEngine:
             self.logger.debug("[REVIEW] Review call failed: %s", e)
             review = {"success": False, "lessons": str(e), "next_recommendation": ""}
 
+        next_rec = str(review.get("next_recommendation", "")).strip()
+        success = review.get("success", False)
+
         self.logger.info(
             "[REVIEW] '%s' — success=%s | next: %s",
-            action_name,
-            review.get("success"),
-            str(review.get("next_recommendation", ""))[:80],
+            action_name, success, next_rec[:80] if next_rec else "none (task complete)",
         )
         self._broadcast("review_complete", {
             "action": action_name,
-            "success": review.get("success"),
+            "success": success,
             "lessons": str(review.get("lessons", ""))[:200],
-            "next_recommendation": str(review.get("next_recommendation", ""))[:100],
+            "next_recommendation": next_rec[:100] if next_rec else "",
+            "domain_step": self._domain_action_count,
         })
+
+        # ── TASK CONTINUITY DECISION ─────────────────────────────────
+        # If the REVIEW recommends a follow-up action in the same domain,
+        # store it so the next idle cycle continues instead of randomizing.
+        status = result.get("status", "unknown") if isinstance(result, dict) else "unknown"
+
+        if self._should_continue_domain(next_rec, status, domain):
+            self._next_recommendation = self._normalize_recommendation(next_rec, domain)
+            self.logger.info(
+                "[CONTINUITY] Domain '%s' will continue → next action: '%s' (step %d/%d)",
+                domain, self._next_recommendation, self._domain_action_count, self._max_domain_actions,
+            )
+            self._broadcast("continuity", {
+                "domain": domain,
+                "next_action": self._next_recommendation,
+                "step": self._domain_action_count,
+                "max_steps": self._max_domain_actions,
+            })
+        else:
+            # Task sequence is complete — clear domain state
+            reason = "max_steps" if self._domain_action_count >= self._max_domain_actions else "no_follow_up"
+            self.logger.info(
+                "[CONTINUITY] Domain '%s' sequence COMPLETE — reason: %s. Domain will be re-selected next cycle.",
+                domain, reason,
+            )
+            self._reset_domain_state()
+
+    def _should_continue_domain(self, next_rec: str, status: str, domain: str) -> bool:
+        """
+        Decides whether to continue in the current domain based on the REVIEW output.
+
+        Returns True if:
+        - The REVIEW recommended a follow-up action
+        - The action succeeded or was skipped (not a hard error)
+        - We haven't exceeded the max sequential domain actions
+        """
+        if not next_rec:
+            return False
+
+        if self._domain_action_count >= self._max_domain_actions:
+            return False
+
+        if status == "error":
+            # Don't continue on errors — switch to a fresh domain
+            return False
+
+        # Validate the recommendation looks like an action name (not random prose)
+        # Business actions: find_jobs, evaluate_jobs, send_proposals, deliver_project, etc.
+        # GitHub actions: improve_repo, enhance_repo, create_repo, daily_commit, etc.
+        valid_business_actions = {a["name"] for a in _get_domain_actions("business")}
+        valid_github_actions = {a["name"] for a in _get_domain_actions("github")}
+
+        all_valid = valid_business_actions | valid_github_actions
+        normalized = self._normalize_recommendation(next_rec, domain)
+
+        if normalized in all_valid:
+            return True
+
+        # If the recommendation is prose but contains a known action name, extract it
+        for action_name in all_valid:
+            if action_name in next_rec.lower().replace("-", "_").replace(" ", "_"):
+                return True
+
+        return False
+
+    def _normalize_recommendation(self, next_rec: str, domain: str) -> str:
+        """
+        Normalizes a REVIEW recommendation string into a valid action name.
+        Handles cases where the LLM returns prose like "evaluate_jobs to score leads"
+        instead of just "evaluate_jobs".
+        """
+        if not next_rec:
+            return ""
+
+        rec_lower = next_rec.lower().strip().replace("-", "_").replace(" ", "_")
+
+        # Direct match
+        valid_actions = {a["name"] for a in _get_domain_actions(domain)}
+        if rec_lower in valid_actions:
+            return rec_lower
+
+        # Check if any valid action name is a prefix/substring of the recommendation
+        for action_name in valid_actions:
+            if action_name in rec_lower:
+                return action_name
+
+        # Fuzzy: check if the first word(s) match an action
+        words = next_rec.lower().strip().replace("-", "_").split()
+        if words:
+            candidate = words[0]
+            if candidate in valid_actions:
+                return candidate
+            # Try first two words joined with underscore
+            if len(words) >= 2:
+                candidate = f"{words[0]}_{words[1]}"
+                if candidate in valid_actions:
+                    return candidate
+
+        return next_rec.strip()
+
+    def _reset_domain_state(self):
+        """Clears the task continuity state, preparing for a fresh domain selection."""
+        self._active_domain = None
+        self._next_recommendation = None
+        self._domain_action_count = 0
 
     def _execute_pending_work(self):
         """Resumes interrupted pending work from GitHubPresence."""
@@ -398,9 +593,10 @@ class IdleEngine:
         try:
             if hasattr(self.sai, 'memory') and hasattr(self.sai, 'brain'):
                 content = (
-                    f"Idle Engine Interrupted: Was working on GitHub presence. "
+                    f"Idle Engine Interrupted: Was working on {state.get('active_domain', 'unknown')} domain. "
                     f"Paused at {state.get('paused_at')}. "
-                    f"Pending: {json.dumps(state.get('pending_work', {}))[:300]}"
+                    f"Step {state.get('domain_action_count', 0)}, next: {state.get('next_recommendation', 'none')}. "
+                    f"Pending: {json.dumps(state.get('pending_work', {}))[:200]}"
                 )
                 embedding = self.sai.brain.get_embedding(content)
                 self.sai.memory.save_semantic_memory(
@@ -433,6 +629,11 @@ class IdleEngine:
             "github_weight_pct": 100 - self._business_weight,
             # Last plan produced by PLAN stage
             "last_plan": self._last_plan,
+            # Task continuity state
+            "active_domain": self._active_domain,
+            "next_recommendation": self._next_recommendation,
+            "domain_action_count": self._domain_action_count,
+            "max_domain_actions": self._max_domain_actions,
         }
 
         # Add business engine status if available
@@ -444,3 +645,37 @@ class IdleEngine:
                 pass
 
         return status
+
+
+def _get_domain_actions(domain: str) -> list:
+    """Returns the action list for a given domain. Used for validation."""
+    if domain == "business":
+        return [
+            {"name": "find_jobs"},
+            {"name": "evaluate_jobs"},
+            {"name": "send_proposals"},
+            {"name": "deliver_project"},
+            {"name": "follow_up"},
+            {"name": "update_portfolio"},
+        ]
+    else:  # github
+        return [
+            {"name": "create_repo"},
+            {"name": "update_profile"},
+            {"name": "improve_repo"},
+            {"name": "create_gist"},
+            {"name": "star_trending"},
+            {"name": "update_status"},
+            {"name": "profile_readme"},
+            {"name": "daily_commit"},
+            {"name": "trend_jack"},
+            {"name": "github_pages"},
+            {"name": "enhance_repo"},
+            {"name": "create_release"},
+            {"name": "pin_repos"},
+            {"name": "follow_devs"},
+            {"name": "self_issues"},
+            {"name": "fork_improve"},
+            {"name": "awesome_list"},
+            {"name": "enable_discussions"},
+        ]

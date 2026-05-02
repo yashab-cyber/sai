@@ -517,6 +517,18 @@ class SAI:
                 return self.coder.format_code(params['path'])
             elif tool_name == "coder.test":
                 return self.coder.run_tests(params['path'])
+            elif tool_name == "coder.detect_project":
+                return self.coder.detect_project(params.get('path', '.'))
+            elif tool_name == "coder.scaffold":
+                return self.coder.scaffold_project(params['framework'], params.get('name', 'app'), params.get('path', '.'))
+            elif tool_name == "coder.install_deps":
+                return self.coder.install_deps(params.get('path', '.'))
+            elif tool_name == "coder.dev_server":
+                return self.coder.dev_server(params.get('path', '.'))
+            elif tool_name == "coder.build":
+                return self.coder.build_project(params.get('path', '.'))
+            elif tool_name == "coder.run":
+                return self.coder.run_file(params['path'], params.get('args', ''))
             elif tool_name == "coder.tdd":
                 return self.tdd.run_loop(params['objective'], params['path'])
             

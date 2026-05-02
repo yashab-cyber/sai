@@ -48,7 +48,7 @@ class ToolManifest:
         },
         {
             "name": "coder.replace_string",
-            "description": "Replaces an exact snippet of code with a new snippet. Use this for highly precise edits and refactors in any file type.",
+            "description": "Replaces an exact snippet of code with a new snippet. Use this for highly precise edits and refactors in any file type (Python, JS, TS, HTML, CSS, Rust, Go, etc.).",
             "parameters": {
                 "path": "string",
                 "old_string": "string (the exact literal text to replace, including intact indentation/whitespace)",
@@ -57,21 +57,21 @@ class ToolManifest:
         },
         {
             "name": "coder.lint",
-            "description": "Runs flake8 on a python file to detect syntax and style errors.",
+            "description": "Runs the appropriate linter for any supported language (flake8 for Python, ESLint for JS/TS, cargo clippy for Rust, golangci-lint for Go, shellcheck for Shell, etc.).",
             "parameters": {
                 "path": "string"
             }
         },
         {
             "name": "coder.format",
-            "description": "Runs black on a python file to auto-format it to standard PEP 8 style.",
+            "description": "Auto-formats any source file using the language-specific formatter (black for Python, prettier for JS/TS/HTML/CSS/JSON, cargo fmt for Rust, gofmt for Go, clang-format for C/C++, etc.).",
             "parameters": {
                 "path": "string"
             }
         },
         {
             "name": "coder.test",
-            "description": "Runs pytest on a given file or directory.",
+            "description": "Runs the appropriate test suite for the detected project (pytest for Python, jest for JS/TS, cargo test for Rust, go test for Go, etc.).",
             "parameters": {
                 "path": "string"
             }
@@ -86,7 +86,7 @@ class ToolManifest:
         },
         {
             "name": "coder.write",
-            "description": "Writes a new Python module with syntax validation.",
+            "description": "Writes a new source file with language-appropriate validation and formatting. Supports Python, JS, TS, HTML, CSS, Rust, Go, and all other registered languages.",
             "parameters": {
                 "path": "string",
                 "code": "string"
@@ -94,7 +94,7 @@ class ToolManifest:
         },
         {
             "name": "coder.replace_function",
-            "description": "Replaces an existing function logic in a module. Use this for specific refactoring of methods.",
+            "description": "Replaces an existing function in a source file. Uses AST for Python (precise, structural) and intelligent text-block replacement for other languages (JS, TS, Rust, Go, etc.).",
             "parameters": {
                 "path": "string",
                 "function_name": "string",
@@ -102,8 +102,53 @@ class ToolManifest:
             }
         },
         {
+            "name": "coder.detect_project",
+            "description": "Scans a directory and returns the detected tech stack, framework (React, Next.js, Django, Flask, Express, Rust, Go, Flutter, etc.), package manager, and available dev/build/test commands.",
+            "parameters": {
+                "path": "string (directory to scan, defaults to '.')"
+            }
+        },
+        {
+            "name": "coder.scaffold",
+            "description": "Scaffolds a new project for a given framework. Supported: react, nextjs, vite, vue, angular, svelte, astro, nuxt, express, flask, fastapi, django, rust, go, flutter.",
+            "parameters": {
+                "framework": "string (e.g. 'react', 'nextjs', 'express', 'flask', 'rust')",
+                "name": "string (project name, default: 'app')",
+                "path": "string (parent directory, default: '.')"
+            }
+        },
+        {
+            "name": "coder.install_deps",
+            "description": "Auto-detects the package manager (npm/yarn/pnpm/pip/cargo/go) and installs all project dependencies.",
+            "parameters": {
+                "path": "string (project directory, default: '.')"
+            }
+        },
+        {
+            "name": "coder.dev_server",
+            "description": "Starts the dev server for the detected framework (npm run dev, flask run, cargo run, go run, flutter run, etc.). Runs in background.",
+            "parameters": {
+                "path": "string (project directory, default: '.')"
+            }
+        },
+        {
+            "name": "coder.build",
+            "description": "Runs the build command for the detected framework (npm run build, cargo build --release, go build, flutter build, etc.).",
+            "parameters": {
+                "path": "string (project directory, default: '.')"
+            }
+        },
+        {
+            "name": "coder.run",
+            "description": "Executes a source file in the correct runtime (python3 for .py, node for .js, npx tsx for .ts, cargo run for .rs, go run for .go, bash for .sh, ruby for .rb, dart for .dart).",
+            "parameters": {
+                "path": "string (source file to execute)",
+                "args": "string (optional command-line arguments)"
+            }
+        },
+        {
             "name": "analyzer.scan",
-            "description": "Scans the entire codebase to build a map of classes and functions.",
+            "description": "Scans the entire codebase to build a map of classes and functions across all languages (Python, JS, TS, Rust, Go, Java, Kotlin, C/C++, Ruby, etc.).",
             "parameters": {}
         },
         {
