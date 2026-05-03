@@ -292,7 +292,8 @@ class SocialMediaManager:
 
         self.logger.info("[LOGIN] GitHub — verifying API token (no browser needed)")
         try:
-            resp = requests.get(
+            resp = await asyncio.to_thread(
+                requests.get,
                 "https://api.github.com/user",
                 headers={"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"},
                 timeout=10,
@@ -365,7 +366,13 @@ class SocialMediaManager:
                     import json
                     start = resp.find("{")
                     end = resp.rfind("}") + 1
-                    resp = json.loads(resp[start:end])
+                    if start >= 0 and end > start:
+                        try:
+                            resp = json.loads(resp[start:end])
+                        except Exception:
+                            resp = {}
+                    else:
+                        resp = {}
 
                 input_type = resp.get("type", "single_field")
                 selectors = resp.get("selectors", [])
@@ -448,6 +455,53 @@ class SocialMediaManager:
                     return False  # No selects on page — not a birthday page
 
             if not month_sel:
+                try:
+                    month_loc = page.locator("[title*='Month' i], [aria-label*='Month' i]").first
+                    if await month_loc.count() > 0:
+                        self.logger.info("[%s] Detected React birthday dropdowns — attempting fill via DOM locators", platform)
+                        await month_loc.click(force=True, timeout=2000)
+                        await asyncio.sleep(0.5)
+                        
+                        jan = page.locator("text='January'").first
+                        if await jan.count() == 0:
+                            jan = page.locator("text='Jan'").first
+                        if await jan.count() == 0:
+                            jan = page.locator("text='1'").first
+                        if await jan.count() > 0:
+                            await jan.click(force=True, timeout=2000)
+                        await asyncio.sleep(0.3)
+
+                        day_loc = page.locator("[title*='Day' i], [aria-label*='Day' i]").first
+                        if await day_loc.count() > 0:
+                            await day_loc.click(force=True, timeout=2000)
+                            await asyncio.sleep(0.5)
+                            d12 = page.locator("text='12'").first
+                            if await d12.count() > 0:
+                                await d12.click(force=True, timeout=2000)
+                            await asyncio.sleep(0.3)
+
+                        year_loc = page.locator("[title*='Year' i], [aria-label*='Year' i]").first
+                        if await year_loc.count() > 0:
+                            await year_loc.click(force=True, timeout=2000)
+                            await asyncio.sleep(0.5)
+                            y2k = page.locator("text='2000'").first
+                            if await y2k.count() > 0:
+                                await y2k.click(force=True, timeout=2000)
+                            await asyncio.sleep(0.3)
+
+                        self.logger.info("[%s] ✅ Birthday fields filled via React DOM Strategy", platform)
+                        
+                        # Click Next
+                        for sel in ["button:has-text('Next')", "button:has-text('Submit')", "button[type='submit']"]:
+                            el = await page.query_selector(sel)
+                            if el and await el.is_visible():
+                                await el.click()
+                                self.logger.info("[%s] Clicked submit after React birthday fill", platform)
+                                await asyncio.sleep(3)
+                                return True
+                        return True
+                except Exception as e:
+                    self.logger.debug("[%s] React birthday strategy failed: %s", platform, e)
                 return False
 
             self.logger.info("[%s] Detected birthday dropdowns — attempting fill", platform)
@@ -462,21 +516,21 @@ class SocialMediaManager:
                     pass
             await asyncio.sleep(0.3)
 
-            # Day: try value "15"
+            # Day: try value "12"
             if day_sel:
                 try:
-                    await day_sel.select_option(value="15")
+                    await day_sel.select_option(value="12")
                 except Exception:
                     try:
-                        await day_sel.select_option(index=15)
+                        await day_sel.select_option(index=12)
                     except Exception:
                         pass
                 await asyncio.sleep(0.3)
 
-            # Year: try "1995" (makes account 31 years old)
+            # Year: try "2000" (makes account 26 years old)
             if year_sel:
                 try:
-                    await year_sel.select_option(value="1995")
+                    await year_sel.select_option(value="2000")
                 except Exception:
                     try:
                         # Fallback: pick middle option
@@ -489,7 +543,7 @@ class SocialMediaManager:
                         pass
                 await asyncio.sleep(0.3)
 
-            self.logger.info("[%s] ✅ Birthday fields filled (Jan 15, 1995)", platform)
+            self.logger.info("[%s] ✅ Birthday fields filled (Jan 12, 2000)", platform)
 
             # Click Next/Submit button after filling birthday
             await asyncio.sleep(0.5)
@@ -678,7 +732,11 @@ class SocialMediaManager:
                             result = {"status": "success"}
                         except Exception as e:
                             # CV fallback: if selector fails, try coordinates if provided
-                            x, y = int(resp.get("x", 0)), int(resp.get("y", 0))
+                            try:
+                                x = int(resp.get("x") or 0)
+                                y = int(resp.get("y") or 0)
+                            except ValueError:
+                                x, y = 0, 0
                             if x and y:
                                 result = await self.browser.click_at_coordinates(x, y)
                                 self.logger.info("[%s] Selector failed, CV fallback click (%d,%d) → %s", platform, x, y, result.get("status"))
@@ -696,7 +754,11 @@ class SocialMediaManager:
                             result = {"status": "success"}
                         except Exception:
                             # CV fallback
-                            x, y = int(resp.get("x", 0)), int(resp.get("y", 0))
+                            try:
+                                x = int(resp.get("x") or 0)
+                                y = int(resp.get("y") or 0)
+                            except ValueError:
+                                x, y = 0, 0
                             if x and y:
                                 result = await self.browser.type_at_coordinates(x, y, text)
                                 self.logger.info("[%s] Selector failed, CV fallback type (%d,%d) → %s", platform, x, y, result.get("status"))
@@ -957,9 +1019,12 @@ class SocialMediaManager:
             "- Analyse the screenshot AND the page text to understand what page/form is shown.\n"
             "- The browser viewport is 1280x720 pixels. Top-left is (0,0).\n"
             "- Decide the SINGLE best next action to take.\n"
-            "- Return PIXEL COORDINATES (x, y) of the element you want to interact with.\n"
-            "- Do NOT use CSS selectors — they are unreliable on modern websites.\n"
-            "- For dropdown/select fields (like birthday Month/Day/Year), use action='select_dropdown'.\n"
+            "- Use robust DOM locators (action='click' with 'selector') for reliability on React apps.\n"
+            "- CSS selectors or exact text selectors like \"button:has-text('Next')\" or \"[title='Month:']\" are strongly preferred over coordinates.\n"
+            "- Use action='click' and provide 'selector'.\n"
+            "- Use action='type' and provide 'selector' and 'text'.\n"
+            "- Use PIXEL COORDINATES (action='click_at' or 'type_at') ONLY as a last resort if you cannot find a stable DOM selector.\n"
+            "- For dropdown/select fields (like birthday Month/Day/Year), use action='click' on the dropdown, wait, then 'click' the option text.\n"
             "- If credentials are already filled in, just click the submit/sign-in button.\n"
             "- If you see a verification/OTP code request, use action='otp' (SAI will read email).\n"
             "- If signup/login appears complete (home page, dashboard, feed visible), set status='completed'.\n"
@@ -967,10 +1032,11 @@ class SocialMediaManager:
             "- NEVER use 'Sign in with Google' — Google blocks automated browsers.\n"
             "- Do NOT navigate to accounts.google.com — it will fail.\n\n"
             "Respond ONLY in JSON:\n"
-            '{"action": "click_at|type_at|select_dropdown|press|scroll|wait|otp|navigate",\n'
-            ' "x": pixel_x_coordinate,\n'
-            ' "y": pixel_y_coordinate,\n'
-            ' "text": "text to type (for type_at action)",\n'
+            '{"action": "click|type|click_at|type_at|select_dropdown|press|scroll|wait|otp|navigate",\n'
+            ' "selector": "CSS selector (strongly preferred)",\n'
+            ' "x": pixel_x_coordinate (only if selector unavailable),\n'
+            ' "y": pixel_y_coordinate (only if selector unavailable),\n'
+            ' "text": "text to type (for type/type_at)",\n'
             ' "option_text": "option to select (for select_dropdown)",\n'
             ' "key": "key name (for press action)",\n'
             ' "url": "url (for navigate action)",\n'

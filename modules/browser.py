@@ -333,7 +333,24 @@ class BrowserManager:
                             self.logger.info("CV select at (%d, %d): '%s' via value", x, y, option_text)
                             return {"status": "success", "x": x, "y": y, "option": option_text, "method": "native_value"}
                         except Exception:
-                            pass
+                            # Try to find partial match among options (e.g. "Jan" matches "January")
+                            try:
+                                options = await selects[idx].evaluate("""select => {
+                                    return Array.from(select.options).map(o => ({text: o.text, value: o.value}));
+                                }""")
+                                matched_val = None
+                                for opt in options:
+                                    txt = opt.get('text', '').lower()
+                                    target = option_text.lower()
+                                    if txt and target and (txt in target or target in txt):
+                                        matched_val = opt['value']
+                                        break
+                                if matched_val:
+                                    await selects[idx].select_option(value=matched_val)
+                                    self.logger.info("CV select at (%d, %d): '%s' via partial match", x, y, option_text)
+                                    return {"status": "success", "x": x, "y": y, "option": option_text, "method": "native_partial"}
+                            except Exception:
+                                pass
 
             # Strategy 2: Click to open dropdown, then click the option text
             await self.page.mouse.click(x, y)

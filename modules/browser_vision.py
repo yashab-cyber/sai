@@ -113,7 +113,13 @@ class BrowserVision:
             if isinstance(resp, str):
                 start = resp.find("{")
                 end = resp.rfind("}") + 1
-                resp = json.loads(resp[start:end])
+                if start >= 0 and end > start:
+                    try:
+                        resp = json.loads(resp[start:end])
+                    except Exception:
+                        return {"found": False, "message": "JSON parse error"}
+                else:
+                    return {"found": False, "message": "No JSON found in response"}
 
             return resp
         except Exception as e:
@@ -156,7 +162,13 @@ class BrowserVision:
             if isinstance(resp, str):
                 start = resp.find("{")
                 end = resp.rfind("}") + 1
-                resp = json.loads(resp[start:end])
+                if start >= 0 and end > start:
+                    try:
+                        resp = json.loads(resp[start:end])
+                    except Exception:
+                        return {"status": "error", "elements": [], "message": "JSON parse error"}
+                else:
+                    return {"status": "error", "elements": [], "message": "No JSON found in response"}
             return resp
         except Exception as e:
             logger.warning("get_page_understanding failed: %s", e)
