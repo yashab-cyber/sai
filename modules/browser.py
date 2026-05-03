@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 from playwright.async_api import async_playwright
 from typing import Dict, Any, Optional
 from modules.captcha_solver import CaptchaSolver, make_stealth_context
@@ -240,6 +241,112 @@ class BrowserManager:
             return {"status": "success", "text": clean_text[:8000]}
         except Exception as e:
             return {"status": "error", "message": str(e)}
+
+    # ══════════════════════════════════════════════════════════════════════
+    # COORDINATE-BASED INTERACTION (Computer Vision)
+    # These methods bypass CSS selectors entirely — they click/type at
+    # pixel coordinates on the viewport, making them immune to DOM changes.
+    # ══════════════════════════════════════════════════════════════════════
+
+    async def click_at_coordinates(self, x: int, y: int) -> Dict[str, Any]:
+        """
+        Clicks at exact pixel coordinates on the page.
+        Uses human-like mouse movement for stealth.
+        """
+        try:
+            await self._ensure_browser()
+            # Move to position with natural curve, then click
+            await self.page.mouse.move(x, y, steps=random.randint(5, 12))
+            await asyncio.sleep(random.uniform(0.05, 0.15))
+            await self.page.mouse.click(x, y)
+            self.logger.info("CV click at (%d, %d)", x, y)
+            return {"status": "success", "x": x, "y": y}
+        except Exception as e:
+            return {"status": "error", "message": f"CV click failed at ({x},{y}): {e}"}
+
+    async def type_at_coordinates(self, x: int, y: int, text: str) -> Dict[str, Any]:
+        """
+        Clicks at coordinates to focus an input, then types text via keyboard.
+        Works on any input field regardless of its DOM attributes.
+        """
+        try:
+            await self._ensure_browser()
+            # Click to focus the element
+            await self.page.mouse.click(x, y)
+            await asyncio.sleep(0.3)
+            # Clear any existing text
+            await self.page.keyboard.press("Control+A")
+            await self.page.keyboard.press("Backspace")
+            await asyncio.sleep(0.1)
+            # Type with human-like delay
+            await self.page.keyboard.type(text, delay=random.randint(30, 80))
+            self.logger.info("CV type at (%d, %d): '%s'", x, y, text[:30])
+            return {"status": "success", "x": x, "y": y, "text": text}
+        except Exception as e:
+            return {"status": "error", "message": f"CV type failed at ({x},{y}): {e}"}
+
+    async def select_option_visually(self, x: int, y: int, option_text: str) -> Dict[str, Any]:
+        """
+        Handles <select> dropdowns by clicking at coordinates to open them,
+        then selecting an option by its visible text.
+        Falls back to keyboard arrow navigation if direct selection fails.
+        """
+        try:
+            await self._ensure_browser()
+
+            # Strategy 1: Find <select> element near the coordinates via JS
+            # evaluate() returns raw JSON (not a handle), so null check works correctly
+            select_info = await self.page.evaluate(
+                """(coords) => {
+                    const elements = document.querySelectorAll('select');
+                    for (const el of elements) {
+                        const rect = el.getBoundingClientRect();
+                        const dx = Math.abs(rect.x + rect.width/2 - coords.x);
+                        const dy = Math.abs(rect.y + rect.height/2 - coords.y);
+                        if (dx < 150 && dy < 50) {
+                            // Return a unique selector for this element
+                            const title = el.getAttribute('title') || '';
+                            const ariaLabel = el.getAttribute('aria-label') || '';
+                            const name = el.getAttribute('name') || '';
+                            const idx = Array.from(document.querySelectorAll('select')).indexOf(el);
+                            return {found: true, title, ariaLabel, name, index: idx};
+                        }
+                    }
+                    return {found: false};
+                }""",
+                {"x": x, "y": y},
+            )
+
+            if select_info and select_info.get("found"):
+                # Re-query the select element by its index among all selects
+                idx = select_info["index"]
+                selects = await self.page.query_selector_all("select")
+                if idx < len(selects):
+                    try:
+                        await selects[idx].select_option(label=option_text)
+                        self.logger.info("CV select at (%d, %d): '%s' via native select", x, y, option_text)
+                        return {"status": "success", "x": x, "y": y, "option": option_text, "method": "native"}
+                    except Exception:
+                        # Try by value instead of label
+                        try:
+                            await selects[idx].select_option(value=option_text)
+                            self.logger.info("CV select at (%d, %d): '%s' via value", x, y, option_text)
+                            return {"status": "success", "x": x, "y": y, "option": option_text, "method": "native_value"}
+                        except Exception:
+                            pass
+
+            # Strategy 2: Click to open dropdown, then click the option text
+            await self.page.mouse.click(x, y)
+            await asyncio.sleep(0.5)
+            option_loc = self.page.get_by_text(option_text, exact=True)
+            if await option_loc.count() > 0:
+                await option_loc.first.click()
+                self.logger.info("CV select at (%d, %d): '%s' via text click", x, y, option_text)
+                return {"status": "success", "x": x, "y": y, "option": option_text, "method": "text_click"}
+
+            return {"status": "error", "message": f"Could not find option '{option_text}' near ({x},{y})"}
+        except Exception as e:
+            return {"status": "error", "message": f"CV select failed at ({x},{y}): {e}"}
 
     async def close(self):
         """Closes the browser session gracefully."""

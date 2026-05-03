@@ -59,6 +59,7 @@ from modules.business_engine import BusinessEngine
 from modules.credential_vault import CredentialVault
 from modules.account_registry import AccountRegistry
 from modules.social_media_manager import SocialMediaManager
+from modules.browser_vision import BrowserVision
 
 class SAI:
     """
@@ -110,6 +111,7 @@ class SAI:
             timezone=browser_config.get('timezone', "UTC"),
             brain=self.brain,
         )
+        self.browser_vision = BrowserVision(self.browser, self.brain)
         self.gui = GUIManager(self)
         self.system = SystemManager(self.executor)
         self.hud_window = HUDWindow()
@@ -513,6 +515,18 @@ class SAI:
                 return await self.browser.wait_for(params['selector'], params.get('state', 'visible'))
             elif tool_name == "browser.explore":
                 return await self.browser.get_interactive_elements()
+            elif tool_name == "browser.cv_click":
+                return await self.browser.click_at_coordinates(
+                    int(params.get('x', 0)), int(params.get('y', 0)))
+            elif tool_name == "browser.cv_type":
+                return await self.browser.type_at_coordinates(
+                    int(params.get('x', 0)), int(params.get('y', 0)), params.get('text', ''))
+            elif tool_name == "browser.cv_analyze":
+                return await self.browser_vision.analyze_and_act(
+                    task_context=params.get('task', ''), extra_context=params.get('context', ''))
+            elif tool_name == "browser.cv_find":
+                return await self.browser_vision.find_element_coordinates(
+                    description=params.get('description', ''))
             elif tool_name == "browser.scrape":
                 return await self.browser.scrape_page_text()
             

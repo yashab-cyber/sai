@@ -405,6 +405,124 @@ class SocialMediaManager:
         }
 
     # ══════════════════════════════════════════
+    # DETERMINISTIC BIRTHDAY HANDLER
+    # ══════════════════════════════════════════
+
+    async def _handle_birthday_step(self, platform: str) -> bool:
+        """
+        Deterministically fills birthday <select> dropdowns.
+        Instagram (and others) use HTML <select> elements for Month/Day/Year.
+        These are NOT text inputs — CSS selectors like input[placeholder='Month'] fail.
+
+        Uses multiple strategies:
+          1. Title-based: select[title='Month:'] (Instagram's actual DOM)
+          2. Generic: find all <select> elements on the page
+          3. Aria-label based: select[aria-label='Month']
+
+        Returns True if birthday fields were found and filled.
+        """
+        page = self.browser.page
+        try:
+            # Wait a moment for the birthday form to render
+            await asyncio.sleep(2)
+
+            # ── Strategy 1: Title-based selectors (Instagram uses title='Month:' etc.) ──
+            month_sel = await page.query_selector("select[title*='Month' i]")
+            day_sel = await page.query_selector("select[title*='Day' i]")
+            year_sel = await page.query_selector("select[title*='Year' i]")
+
+            # ── Strategy 2: Aria-label based ──
+            if not month_sel:
+                month_sel = await page.query_selector("select[aria-label*='Month' i]")
+            if not day_sel:
+                day_sel = await page.query_selector("select[aria-label*='Day' i]")
+            if not year_sel:
+                year_sel = await page.query_selector("select[aria-label*='Year' i]")
+
+            # ── Strategy 3: Generic — grab all <select> elements ──
+            if not month_sel:
+                selects = await page.query_selector_all("select")
+                if len(selects) >= 3:
+                    month_sel, day_sel, year_sel = selects[0], selects[1], selects[2]
+                elif len(selects) == 0:
+                    return False  # No selects on page — not a birthday page
+
+            if not month_sel:
+                return False
+
+            self.logger.info("[%s] Detected birthday dropdowns — attempting fill", platform)
+
+            # Month: try value "1" (January), then index fallback
+            try:
+                await month_sel.select_option(value="1")
+            except Exception:
+                try:
+                    await month_sel.select_option(index=1)
+                except Exception:
+                    pass
+            await asyncio.sleep(0.3)
+
+            # Day: try value "15"
+            if day_sel:
+                try:
+                    await day_sel.select_option(value="15")
+                except Exception:
+                    try:
+                        await day_sel.select_option(index=15)
+                    except Exception:
+                        pass
+                await asyncio.sleep(0.3)
+
+            # Year: try "1995" (makes account 31 years old)
+            if year_sel:
+                try:
+                    await year_sel.select_option(value="1995")
+                except Exception:
+                    try:
+                        # Fallback: pick middle option
+                        options = await year_sel.query_selector_all("option")
+                        mid = len(options) // 2
+                        val = await options[mid].get_attribute("value")
+                        if val:
+                            await year_sel.select_option(value=val)
+                    except Exception:
+                        pass
+                await asyncio.sleep(0.3)
+
+            self.logger.info("[%s] ✅ Birthday fields filled (Jan 15, 1995)", platform)
+
+            # Click Next/Submit button after filling birthday
+            await asyncio.sleep(0.5)
+            for btn_text in ["Next", "Submit", "Sign Up", "Continue"]:
+                try:
+                    loc = page.get_by_role("button", name=btn_text, exact=False)
+                    if await loc.count() > 0 and await loc.first.is_visible():
+                        await loc.first.click(timeout=3000)
+                        self.logger.info("[%s] Clicked '%s' after birthday fill", platform, btn_text)
+                        await asyncio.sleep(3)
+                        return True
+                except Exception:
+                    continue
+
+            # Fallback: try CSS submit selectors
+            for sel in ["button[type='submit']", "input[type='submit']"]:
+                try:
+                    el = await page.query_selector(sel)
+                    if el and await el.is_visible():
+                        await el.click()
+                        self.logger.info("[%s] Clicked submit after birthday fill: %s", platform, sel)
+                        await asyncio.sleep(3)
+                        return True
+                except Exception:
+                    continue
+
+            return True  # Fields filled even if submit not found
+
+        except Exception as e:
+            self.logger.debug("[%s] Birthday handler error: %s", platform, e)
+            return False
+
+    # ══════════════════════════════════════════
     # LLM-GUIDED BROWSER INTERACTION LOOP
     # ══════════════════════════════════════════
 
@@ -419,6 +537,7 @@ class SocialMediaManager:
         """
         Core loop: deterministic pre-fill → screenshot → LLM decides action → execute → repeat.
         Handles OTP automatically when detected.
+        Supports BOTH selector-based and coordinate-based (CV) actions.
         """
         if not self.brain:
             return {"status": "error", "message": "Brain not available for guided interaction"}
@@ -426,6 +545,7 @@ class SocialMediaManager:
         import json
 
         otp_attempted = False
+        birthday_attempted = False
         screenshot_path = "logs/social_auth_shot.png"
 
         # ── PHASE 0: Dismiss cookie consent / popups ──
@@ -442,6 +562,13 @@ class SocialMediaManager:
             self.logger.info("[%s] %s iteration %d/%d", platform, mode.upper(), iteration, max_iterations)
 
             await asyncio.sleep(2)  # Allow page to settle
+
+            # ── Auto-detect birthday page BEFORE LLM call ──
+            if mode == "signup" and not birthday_attempted:
+                birthday_done = await self._handle_birthday_step(platform)
+                if birthday_done:
+                    birthday_attempted = True
+                    continue  # Re-screenshot after birthday fill
 
             # Save screenshot to disk so Brain can see it
             try:
@@ -515,9 +642,34 @@ class SocialMediaManager:
                 return {"status": "error", "platform": platform, "mode": mode,
                         "message": resp.get("message", f"{mode} failed")}
 
-            # Execute action — use SHORT timeouts (8s) to fail fast
+            # Execute action — supports BOTH selector-based and coordinate-based (CV)
             try:
-                if action == "click":
+                # ── CV Coordinate-Based Actions ──
+                if action == "click_at":
+                    x = int(resp.get("x") or 0)
+                    y = int(resp.get("y") or 0)
+                    if x and y:
+                        result = await self.browser.click_at_coordinates(x, y)
+                        self.logger.info("[%s] CV click (%d,%d) → %s", platform, x, y, result.get("status"))
+
+                elif action == "type_at":
+                    x = int(resp.get("x") or 0)
+                    y = int(resp.get("y") or 0)
+                    text = resp.get("text", "")
+                    if x and y and text:
+                        result = await self.browser.type_at_coordinates(x, y, text)
+                        self.logger.info("[%s] CV type (%d,%d) → %s", platform, x, y, result.get("status"))
+
+                elif action == "select_dropdown":
+                    x = int(resp.get("x") or 0)
+                    y = int(resp.get("y") or 0)
+                    option = resp.get("option_text", resp.get("text", ""))
+                    if x and y and option:
+                        result = await self.browser.select_option_visually(x, y, option)
+                        self.logger.info("[%s] CV select (%d,%d) '%s' → %s", platform, x, y, option, result.get("status"))
+
+                # ── Legacy Selector-Based Actions (backward compatible) ──
+                elif action == "click":
                     selector = resp.get("selector", "")
                     if selector:
                         try:
@@ -525,7 +677,13 @@ class SocialMediaManager:
                             await self.browser.page.click(selector, timeout=8000)
                             result = {"status": "success"}
                         except Exception as e:
-                            result = {"status": "error", "message": str(e)}
+                            # CV fallback: if selector fails, try coordinates if provided
+                            x, y = int(resp.get("x", 0)), int(resp.get("y", 0))
+                            if x and y:
+                                result = await self.browser.click_at_coordinates(x, y)
+                                self.logger.info("[%s] Selector failed, CV fallback click (%d,%d) → %s", platform, x, y, result.get("status"))
+                            else:
+                                result = {"status": "error", "message": str(e)}
                         self.logger.info("[%s] Click %s → %s", platform, selector, result.get("status"))
 
                 elif action == "type":
@@ -537,19 +695,30 @@ class SocialMediaManager:
                             await self.browser.page.fill(selector, text, timeout=5000)
                             result = {"status": "success"}
                         except Exception:
-                            # Fallback: click + keyboard type
-                            try:
-                                await self.browser.page.click(selector, force=True, timeout=5000)
-                                await self.browser.page.keyboard.type(text, delay=50)
-                                result = {"status": "success"}
-                            except Exception as e:
-                                result = {"status": "error", "message": str(e)}
+                            # CV fallback
+                            x, y = int(resp.get("x", 0)), int(resp.get("y", 0))
+                            if x and y:
+                                result = await self.browser.type_at_coordinates(x, y, text)
+                                self.logger.info("[%s] Selector failed, CV fallback type (%d,%d) → %s", platform, x, y, result.get("status"))
+                            else:
+                                try:
+                                    await self.browser.page.click(selector, force=True, timeout=5000)
+                                    await self.browser.page.keyboard.type(text, delay=50)
+                                    result = {"status": "success"}
+                                except Exception as e:
+                                    result = {"status": "error", "message": str(e)}
                         self.logger.info("[%s] Type into %s → %s", platform, selector, result.get("status"))
 
                 elif action == "press":
                     key = resp.get("key", "Enter")
                     await self.browser.page.keyboard.press(key)
                     self.logger.info("[%s] Press key: %s", platform, key)
+
+                elif action == "scroll":
+                    direction = resp.get("text", "down")
+                    delta = 300 if direction == "down" else -300
+                    await self.browser.page.mouse.wheel(0, delta)
+                    self.logger.info("[%s] Scroll %s", platform, direction)
 
                 elif action == "wait":
                     wait_time = min(resp.get("seconds", 3), 10)
@@ -786,23 +955,28 @@ class SocialMediaManager:
         prompt += (
             "\nINSTRUCTIONS:\n"
             "- Analyse the screenshot AND the page text to understand what page/form is shown.\n"
+            "- The browser viewport is 1280x720 pixels. Top-left is (0,0).\n"
             "- Decide the SINGLE best next action to take.\n"
+            "- Return PIXEL COORDINATES (x, y) of the element you want to interact with.\n"
+            "- Do NOT use CSS selectors — they are unreliable on modern websites.\n"
+            "- For dropdown/select fields (like birthday Month/Day/Year), use action='select_dropdown'.\n"
             "- If credentials are already filled in, just click the submit/sign-in button.\n"
             "- If you see a verification/OTP code request, use action='otp' (SAI will read email).\n"
             "- If signup/login appears complete (home page, dashboard, feed visible), set status='completed'.\n"
             "- If there is an error or block, set status='failed' with explanation.\n"
-            "- NEVER use 'Sign in with Google' — Google blocks automated browsers. Always use the platform's own email+password form.\n"
-            "- Do NOT navigate to accounts.google.com — it will fail with 'browser not secure'.\n"
-            "- EXCEPTION: If you see Google Sign-in and the Google account is ALREADY logged in (no password needed), you may click it.\n\n"
+            "- NEVER use 'Sign in with Google' — Google blocks automated browsers.\n"
+            "- Do NOT navigate to accounts.google.com — it will fail.\n\n"
             "Respond ONLY in JSON:\n"
-            '{"action": "click|type|press|wait|otp|navigate",\n'
-            ' "selector": "css_selector (for click/type)",\n'
-            ' "text": "text to type (for type action)",\n'
+            '{"action": "click_at|type_at|select_dropdown|press|scroll|wait|otp|navigate",\n'
+            ' "x": pixel_x_coordinate,\n'
+            ' "y": pixel_y_coordinate,\n'
+            ' "text": "text to type (for type_at action)",\n'
+            ' "option_text": "option to select (for select_dropdown)",\n'
             ' "key": "key name (for press action)",\n'
             ' "url": "url (for navigate action)",\n'
             ' "seconds": 3,\n'
             ' "status": "ongoing|completed|failed",\n'
-            ' "message": "brief description of what you see/did"}'
+            ' "message": "brief description of what you see and what you are doing"}'
         )
         return prompt
 
