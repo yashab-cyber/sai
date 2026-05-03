@@ -428,6 +428,9 @@ class SocialMediaManager:
         otp_attempted = False
         screenshot_path = "logs/social_auth_shot.png"
 
+        # ── PHASE 0: Dismiss cookie consent / popups ──
+        await self._dismiss_cookie_popups(platform)
+
         # ── PHASE 1: Deterministic Pre-Fill ──
         # Try to fill known input fields directly before LLM guidance.
         prefill_done = await self._deterministic_prefill(platform, creds, mode)
@@ -512,19 +515,35 @@ class SocialMediaManager:
                 return {"status": "error", "platform": platform, "mode": mode,
                         "message": resp.get("message", f"{mode} failed")}
 
-            # Execute action
+            # Execute action — use SHORT timeouts (8s) to fail fast
             try:
                 if action == "click":
                     selector = resp.get("selector", "")
                     if selector:
-                        result = await self.browser.click(selector)
+                        try:
+                            await self.browser.page.wait_for_selector(selector, state="visible", timeout=8000)
+                            await self.browser.page.click(selector, timeout=8000)
+                            result = {"status": "success"}
+                        except Exception as e:
+                            result = {"status": "error", "message": str(e)}
                         self.logger.info("[%s] Click %s → %s", platform, selector, result.get("status"))
 
                 elif action == "type":
                     selector = resp.get("selector", "")
                     text = resp.get("text", "")
                     if selector and text:
-                        result = await self.browser.type_text(selector, text)
+                        try:
+                            await self.browser.page.wait_for_selector(selector, state="visible", timeout=8000)
+                            await self.browser.page.fill(selector, text, timeout=5000)
+                            result = {"status": "success"}
+                        except Exception:
+                            # Fallback: click + keyboard type
+                            try:
+                                await self.browser.page.click(selector, force=True, timeout=5000)
+                                await self.browser.page.keyboard.type(text, delay=50)
+                                result = {"status": "success"}
+                            except Exception as e:
+                                result = {"status": "error", "message": str(e)}
                         self.logger.info("[%s] Type into %s → %s", platform, selector, result.get("status"))
 
                 elif action == "press":
@@ -555,102 +574,174 @@ class SocialMediaManager:
         return {"status": "error", "platform": platform, "mode": mode,
                 "message": f"Max iterations ({max_iterations}) reached without completion"}
 
+    async def _dismiss_cookie_popups(self, platform: str):
+        """
+        Dismiss cookie consent dialogs, GDPR banners, and other popups
+        that may block the signup/login form.
+        """
+        cookie_selectors = [
+            # Instagram / Facebook / Meta
+            "button:has-text('Allow all cookies')",
+            "button:has-text('Allow essential and optional cookies')",
+            "button:has-text('Accept All')",
+            "button:has-text('Accept all')",
+            "button:has-text('Allow All Cookies')",
+            "button:has-text('Decline optional cookies')",
+            # Generic cookie banners
+            "button:has-text('Accept')",
+            "button:has-text('I agree')",
+            "button:has-text('Got it')",
+            "button:has-text('OK')",
+            "button[id='onetrust-accept-btn-handler']",
+            "button[class*='cookie-accept']",
+            "a:has-text('Accept')",
+        ]
+
+        for sel in cookie_selectors:
+            try:
+                el = await self.browser.page.wait_for_selector(sel, state="visible", timeout=2000)
+                if el:
+                    await el.click()
+                    self.logger.info("[%s] Dismissed cookie popup: %s", platform, sel)
+                    await asyncio.sleep(1)  # Let page settle
+                    return
+            except Exception:
+                continue
+
     async def _deterministic_prefill(
         self, platform: str, creds: Dict[str, Any], mode: str
     ) -> bool:
         """
-        Tries to fill email/password fields using known CSS selectors
-        before falling back to LLM. Returns True if any field was filled.
+        Fills email/password fields using two strategies:
+          1. Playwright get_by_label() — works on Instagram/Meta (no name attrs)
+          2. CSS selectors — works on GitHub/Twitter (name-based inputs)
+        Returns True if any field was filled.
         """
         email = creds.get("email", "")
         password = creds.get("password", "")
         filled = False
+        page = self.browser.page
 
-        # Common email/username selectors across platforms
+        # ── Strategy 1: Label-based (Playwright locator API) ──
+        # Try common label texts used across platforms
+        email_labels = ["Mobile number or email", "Email", "Email address",
+                        "Email or phone", "Phone or email"]
+        for label in email_labels:
+            try:
+                loc = page.get_by_label(label, exact=False)
+                if await loc.count() > 0:
+                    await loc.first.fill(email, timeout=3000)
+                    self.logger.info("[%s] Pre-filled email via label '%s'", platform, label)
+                    filled = True
+                    break
+            except Exception:
+                continue
+
+        # Password — label-based
+        try:
+            loc = page.get_by_label("Password", exact=False)
+            if await loc.count() > 0:
+                await loc.first.fill(password, timeout=3000)
+                self.logger.info("[%s] Pre-filled password via label", platform)
+                filled = True
+        except Exception:
+            pass
+
+        # Signup-only fields
+        if mode == "signup":
+            display_name = creds.get("display_name", "")
+            for label in ["Full name", "Name", "Display name"]:
+                try:
+                    loc = page.get_by_label(label, exact=False)
+                    if await loc.count() > 0:
+                        await loc.first.fill(display_name, timeout=3000)
+                        self.logger.info("[%s] Pre-filled name via label '%s'", platform, label)
+                        break
+                except Exception:
+                    continue
+
+            username = creds.get("username_suggestion", "")
+            if username:
+                try:
+                    loc = page.get_by_label("Username", exact=False)
+                    if await loc.count() > 0:
+                        await loc.first.fill(username, timeout=3000)
+                        self.logger.info("[%s] Pre-filled username via label", platform)
+                except Exception:
+                    pass
+
+        # If label-based worked, skip CSS fallback
+        if filled:
+            # Try clicking submit button
+            await asyncio.sleep(0.5)
+            for btn_text in ["Submit", "Sign up", "Sign in", "Log in", "Next"]:
+                try:
+                    loc = page.get_by_role("button", name=btn_text, exact=False)
+                    if await loc.count() > 0 and await loc.first.is_visible():
+                        await loc.first.click(timeout=3000)
+                        self.logger.info("[%s] Clicked submit: '%s'", platform, btn_text)
+                        await asyncio.sleep(3)
+                        break
+                except Exception:
+                    continue
+            # Also try CSS submit selectors
+            for sel in ["input[type='submit']", "button[type='submit']", "input[name='commit']"]:
+                try:
+                    el = await page.query_selector(sel)
+                    if el and await el.is_visible():
+                        await el.click()
+                        self.logger.info("[%s] Clicked submit: %s", platform, sel)
+                        await asyncio.sleep(3)
+                        break
+                except Exception:
+                    continue
+            return filled
+
+        # ── Strategy 2: CSS selector fallback (GitHub, Twitter, etc.) ──
         email_selectors = [
-            "input[name='login']",           # GitHub
-            "input[name='email']",           # Generic
-            "input[name='username']",        # Generic
-            "input[type='email']",           # Generic
-            "input[name='session[username_or_email]']",  # Twitter
-            "input[id='login_field']",       # GitHub
-            "input[id='email']",             # Facebook
-            "#identifierId",                 # Google
+            "input[name='login']", "input[name='email']", "input[name='username']",
+            "input[type='email']", "input[name='session[username_or_email]']",
+            "input[id='login_field']", "input[id='email']", "#identifierId",
         ]
-
         password_selectors = [
-            "input[name='password']",        # Generic
-            "input[type='password']",        # Generic
-            "input[name='session[password]']",  # Twitter
-            "input[id='password']",          # GitHub
+            "input[type='password']", "input[name='password']",
+            "input[name='session[password]']", "input[id='password']",
         ]
 
-        # Try filling email
         for sel in email_selectors:
             try:
-                el = await self.browser.page.query_selector(sel)
-                if el and await el.is_visible():
-                    # Use page.fill() directly for reliability
-                    await self.browser.page.fill(sel, email)
+                el = await page.wait_for_selector(sel, state="visible", timeout=2000)
+                if el:
+                    await page.fill(sel, email)
                     self.logger.info("[%s] Pre-filled email into %s", platform, sel)
                     filled = True
                     break
             except Exception:
                 continue
 
-        # Try filling password — use page.fill() directly, not type_text
-        # page.fill() handles special chars like @ reliably
         for sel in password_selectors:
             try:
-                el = await self.browser.page.query_selector(sel)
-                if el and await el.is_visible():
-                    await self.browser.page.click(sel)  # Focus the field first
-                    await self.browser.page.fill(sel, password)
+                el = await page.wait_for_selector(sel, state="visible", timeout=2000)
+                if el:
+                    await page.click(sel)
+                    await page.fill(sel, password)
                     self.logger.info("[%s] Pre-filled password into %s", platform, sel)
                     filled = True
                     break
-            except Exception as e:
-                self.logger.debug("[%s] Password fill failed for %s: %s", platform, sel, e)
+            except Exception:
                 continue
 
-        # If signup, try display name
-        if mode == "signup":
-            display_name = creds.get("display_name", "")
-            name_selectors = [
-                "input[name='name']", "input[name='display_name']",
-                "input[name='full_name']", "input[name='fullName']",
-                "input[id='name']",
-            ]
-            for sel in name_selectors:
-                try:
-                    el = await self.browser.page.query_selector(sel)
-                    if el and await el.is_visible():
-                        await self.browser.type_text(sel, display_name)
-                        self.logger.info("[%s] Pre-filled name into %s", platform, sel)
-                        break
-                except Exception:
-                    continue
-
-        # Try clicking submit button
+        # Submit via CSS
         if filled:
             await asyncio.sleep(0.5)
-            submit_selectors = [
-                "input[type='submit']",
-                "button[type='submit']",
-                "input[name='commit']",       # GitHub
-                "button[data-testid='login-button']",
-                "button:has-text('Sign in')",
-                "button:has-text('Log in')",
-                "button:has-text('Sign up')",
-                "button:has-text('Next')",
-            ]
-            for sel in submit_selectors:
+            for sel in ["input[type='submit']", "button[type='submit']", "input[name='commit']",
+                        "button:has-text('Sign in')", "button:has-text('Log in')",
+                        "button:has-text('Sign up')", "button:has-text('Next')"]:
                 try:
-                    el = await self.browser.page.query_selector(sel)
+                    el = await page.query_selector(sel)
                     if el and await el.is_visible():
                         await el.click()
                         self.logger.info("[%s] Clicked submit: %s", platform, sel)
-                        # Wait for page to redirect after login
                         await asyncio.sleep(3)
                         break
                 except Exception:

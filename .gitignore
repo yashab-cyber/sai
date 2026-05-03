@@ -5,7 +5,6 @@ venv/
 # Databases
 *.db
 *.sqlite3
-logs/chroma_db/
 
 # Python
 __pycache__/
@@ -19,11 +18,7 @@ __pycache__/
 htmlcov/
 
 # Logs & Temporal Data
-logs/*.png
-logs/*.log
-logs/screenshot.png
-logs/hud.png
-
+**/logs/
 # System
 .DS_Store
 *.swp
@@ -31,3 +26,4 @@ logs/hud.png
 # Workspace Data (User specific)
 workspace/*
 !workspace/.gitkeep
+memory/
