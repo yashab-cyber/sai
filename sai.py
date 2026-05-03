@@ -56,6 +56,9 @@ from modules.idle_engine import IdleEngine
 from modules.email_manager import EmailManager
 from modules.action_pipeline import ActionPipeline
 from modules.business_engine import BusinessEngine
+from modules.credential_vault import CredentialVault
+from modules.account_registry import AccountRegistry
+from modules.social_media_manager import SocialMediaManager
 
 class SAI:
     """
@@ -153,6 +156,19 @@ class SAI:
         self.business_engine.email_mgr = self.email_mgr
         self.business_engine.invoices.email_mgr = self.email_mgr
         self.business_engine.project_mgr.email_mgr = self.email_mgr
+
+        # Credential Vault — Centralized credential access for all platforms
+        self.credential_vault = CredentialVault()
+
+        # Account Registry + Social Media Manager
+        self.account_registry = AccountRegistry()
+        self.social_media = SocialMediaManager(
+            browser=self.browser,
+            brain=self.brain,
+            email_mgr=self.email_mgr,
+            credential_vault=self.credential_vault,
+            account_registry=self.account_registry,
+        )
 
         self._last_good_frames: Dict[str, str] = {}  # Cache for last-known-good device frames
 
@@ -625,6 +641,52 @@ class SAI:
             elif tool_name == "email.status":
                 return self.email_mgr.get_status()
 
+            # ── Credential Vault ──
+            elif tool_name == "credentials.get":
+                return self.credential_vault.get_credentials(
+                    platform=params.get("platform", "default")
+                )
+            elif tool_name == "credentials.signup":
+                return self.credential_vault.get_signup_credentials(
+                    platform=params.get("platform", "")
+                )
+            elif tool_name == "credentials.all":
+                return self.credential_vault.get_all()
+
+            # ── Social Media Manager ──
+            elif tool_name == "social.access":
+                return await self.social_media.access_platform(
+                    platform=params.get("platform", "")
+                )
+            elif tool_name == "social.signup":
+                return await self.social_media.signup(
+                    platform=params.get("platform", "")
+                )
+            elif tool_name == "social.login":
+                return await self.social_media.login(
+                    platform=params.get("platform", "")
+                )
+            elif tool_name == "social.otp":
+                return await self.social_media.handle_otp(
+                    platform=params.get("platform", ""),
+                    wait_seconds=params.get("wait", 90)
+                )
+            elif tool_name == "social.status":
+                return self.social_media.get_status()
+            elif tool_name == "social.platforms":
+                return self.social_media.list_platforms()
+            elif tool_name == "social.register":
+                return self.account_registry.register_account(
+                    platform=params.get("platform", ""),
+                    email=params.get("email", self.credential_vault.email),
+                    username=params.get("username", ""),
+                    has_2fa=params.get("has_2fa", False),
+                    status=params.get("status", "active"),
+                    notes=params.get("notes", ""),
+                )
+            elif tool_name == "social.google_bootstrap":
+                return await self.social_media.bootstrap_google_session()
+
             # Shell
             elif tool_name == "executor.shell":
                 return self.executor.execute_shell(params['command'])
@@ -636,10 +698,26 @@ class SAI:
                 elif params['action'] == "click":
                     return self.control.mouse_click(params.get('x'), params.get('y'), params.get('button', 'left'))
             elif tool_name == "control.keyboard":
+                content = params.get('content', '')
+                # ── Security Guard: Block typing passwords via desktop controls ──
+                # Passwords should ONLY be entered through the headless browser (social.login / browser.interact)
+                sensitive_values = [
+                    self.credential_vault.account_password,
+                    self.credential_vault.email_app_password,
+                ]
+                if params['action'] == "type" and any(s and s in content for s in sensitive_values):
+                    return {
+                        "status": "blocked",
+                        "message": (
+                            "SECURITY: Cannot type passwords via desktop keyboard. "
+                            "Use 'social.login' or 'browser.interact' to enter passwords "
+                            "in the headless browser instead."
+                        ),
+                    }
                 if params['action'] == "type":
-                    return self.control.keyboard_type(params['content'])
+                    return self.control.keyboard_type(content)
                 elif params['action'] == "press":
-                    return self.control.keyboard_press(params['content'])
+                    return self.control.keyboard_press(content)
             
             # Vision Operations
             elif tool_name == "vision.capture":

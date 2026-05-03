@@ -475,10 +475,25 @@ HTMLCanvasElement.prototype.getContext = function(type, ...args) {
 
 async def make_stealth_context(playwright, headless: bool = True,
                                locale: str = "en-US", timezone: str = "UTC"):
-    """Creates a Chromium browser context with full stealth fingerprinting."""
+    """
+    Creates a Chromium browser context with full stealth fingerprinting
+    and PERSISTENT user data directory to preserve login sessions.
+
+    This means:
+      - Google Sign-in works: log in once, session saved forever
+      - 'Sign in with Google' on Reddit, Medium, etc. auto-uses saved session
+      - Cookies, localStorage, and auth tokens persist across SAI restarts
+    """
+    import os
     ua = random.choice(STEALTH_USER_AGENTS)
 
-    browser = await playwright.chromium.launch(
+    # Persistent profile directory — stores cookies/sessions
+    user_data_dir = os.path.join(os.path.dirname(__file__), "..", "memory", "browser_profile")
+    os.makedirs(user_data_dir, exist_ok=True)
+
+    # launch_persistent_context = browser + context in one (with cookie persistence)
+    context = await playwright.chromium.launch_persistent_context(
+        user_data_dir=user_data_dir,
         headless=headless,
         args=[
             "--no-sandbox",
@@ -487,10 +502,10 @@ async def make_stealth_context(playwright, headless: bool = True,
             "--disable-infobars",
             "--window-size=1280,720",
             "--disable-extensions",
+            "--disable-component-extensions-with-background-pages",
+            "--disable-default-apps",
+            "--disable-features=TranslateUI",
         ],
-    )
-
-    context = await browser.new_context(
         viewport={"width": 1280, "height": 720},
         user_agent=ua,
         locale=locale,
@@ -498,9 +513,12 @@ async def make_stealth_context(playwright, headless: bool = True,
         java_script_enabled=True,
         permissions=["geolocation"],
         extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+        ignore_default_args=["--enable-automation"],
     )
 
     # Inject stealth JS on every page before any scripts run
     await context.add_init_script(STEALTH_JS)
 
-    return browser, context
+    # For compatibility with BrowserManager (which expects browser + context)
+    # The persistent context acts as both browser and context
+    return context, context

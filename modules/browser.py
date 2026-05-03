@@ -36,7 +36,11 @@ class BrowserManager:
                 locale=self.locale,
                 timezone=self.timezone,
             )
-            self.page = await self.context.new_page()
+            # Persistent context may already have pages from previous sessions
+            if self.context.pages:
+                self.page = self.context.pages[0]
+            else:
+                self.page = await self.context.new_page()
             self.page.set_default_timeout(self.timeout)
             # Attach CAPTCHA solver
             self.captcha_solver = CaptchaSolver(self, brain=self.brain)
@@ -238,13 +242,26 @@ class BrowserManager:
             return {"status": "error", "message": str(e)}
 
     async def close(self):
-        """Closes the browser session."""
-        if self.browser:
-            await self.browser.close()
-            await self.playwright.stop()
-            self.playwright = None
-            self.browser = None
-            self.context = None
-            self.page = None
-            return {"status": "success"}
-        return {"status": "success", "message": "Browser was not active."}
+        """Closes the browser session gracefully."""
+        try:
+            if self.context:
+                await self.context.close()
+        except Exception as e:
+            self.logger.debug("Context close: %s", e)
+        try:
+            # For non-persistent contexts, browser != context
+            if self.browser and self.browser is not self.context:
+                await self.browser.close()
+        except Exception as e:
+            self.logger.debug("Browser close: %s", e)
+        try:
+            if self.playwright:
+                await self.playwright.stop()
+        except Exception as e:
+            self.logger.debug("Playwright stop: %s", e)
+
+        self.playwright = None
+        self.browser = None
+        self.context = None
+        self.page = None
+        return {"status": "success"}

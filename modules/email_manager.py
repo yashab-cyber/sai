@@ -348,11 +348,13 @@ class EmailManager:
         return {"status": "error", "message": "No OTP found within timeout"}
 
     def get_google_signin_credentials(self) -> dict:
-        """Returns Google account credentials for website sign-in."""
+        """Returns Google account credentials for website sign-in.
+        Uses the real account password (not the SMTP app password)."""
+        account_password = os.getenv("SAI_ACCOUNT_PASSWORD", self.email_password)
         return {
             "status": "success",
             "email": self.email_address,
-            "password": self.email_password,
+            "password": account_password,
             "provider": "google",
             "note": "Use these for Google OAuth / Sign-in with Google flows"
         }

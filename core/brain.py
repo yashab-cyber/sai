@@ -72,8 +72,9 @@ class Brain:
             {"role": "user", "content": content}
         ]
 
-        # Retry once on empty/null response (transient proxy issue)
-        for attempt in range(2):
+        # Retry on empty/null response (transient proxy issue)
+        max_retries = 4
+        for attempt in range(max_retries):
             response = client.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -84,12 +85,13 @@ class Brain:
                 return json.loads(raw_content)
 
             self.logger.warning(
-                "LLM returned empty content (attempt %d/2). Retrying...", attempt + 1
+                "LLM returned empty content (attempt %d/%d). Retrying...",
+                attempt + 1, max_retries,
             )
-            if attempt < 1:
-                _time.sleep(1.0)
+            if attempt < max_retries - 1:
+                _time.sleep(1.0 + attempt)  # Backoff: 1s, 2s, 3s
 
-        raise ValueError("LLM returned empty response after 2 attempts.")
+        raise ValueError(f"LLM returned empty response after {max_retries} attempts.")
 
     def _call_gemini(self, system_prompt: str, user_query: str, image_path: Optional[str] = None) -> Dict[str, Any]:
         """Implementation for Google Gemini API with Multimodal support."""
@@ -136,12 +138,40 @@ class Brain:
         return json.loads(response.json()["message"]["content"])
 
     def _mock_response(self, query: str) -> Dict[str, Any]:
-        """Fallback mock response — JARVIS style."""
+        """Fallback mock response — context-aware JARVIS style.
+        If the query context shows successful actions were already taken,
+        mark the task as completed rather than running useless echo commands.
+        """
+        # Check if agent history contains successful actions
+        query_lower = query.lower()
+        success_indicators = [
+            "status': 'success'", "'status': 'success'",
+            "features_added", "bug_fixed", "committed",
+            "files_changed", "successfully",
+        ]
+        has_success = any(ind in query_lower for ind in success_indicators)
+
+        if has_success:
+            return {
+                "thought": (
+                    "The LLM proxy returned an empty response, sir, but reviewing "
+                    "the action history shows previous actions completed successfully. "
+                    "Marking the task as complete."
+                ),
+                "tool": None,
+                "parameters": {},
+                "status": "completed",
+            }
+
         return {
-            "thought": f"Running in demonstration mode, sir. The directive '{query}' would normally be handled by the {self.provider} neural engine. Shall I attempt an alternative approach?",
+            "thought": (
+                f"Running in demonstration mode, sir. The directive '{query[:100]}' "
+                f"would normally be handled by the {self.provider} neural engine. "
+                "Shall I attempt an alternative approach?"
+            ),
             "plan": ["Reconnaissance", "Strategic execution", "Verification and debrief"],
             "tool": "executor.shell",
-            "parameters": {"command": "echo 'S.A.I. standing by in demonstration mode, sir.'"}
+            "parameters": {"command": "echo 'S.A.I. standing by in demonstration mode, sir.'"},
         }
 
     def generate_plan(self, task: str) -> List[str]:

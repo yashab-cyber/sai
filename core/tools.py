@@ -546,6 +546,78 @@ class ToolManifest:
             "name": "business.analytics",
             "description": "Returns comprehensive business analytics: revenue, proposals, projects, clients, job pipeline metrics.",
             "parameters": {}
+        },
+        # ── Credential Vault Tools ──
+        {
+            "name": "credentials.get",
+            "description": "Returns login credentials (email + password) for any platform. Use when you need to sign in or create accounts on any website.",
+            "parameters": {
+                "platform": "string (google, github, upwork, freelancer, paypal, twitter, facebook, instagram, linkedin, reddit, discord, or any platform name. Default: google)"
+            }
+        },
+        {
+            "name": "credentials.signup",
+            "description": "Returns full signup credentials for account creation: email, password, display name, bio, username suggestion, and recovery email.",
+            "parameters": {
+                "platform": "string (optional: platform name for context. Returns social media credentials by default)"
+            }
+        },
+        {
+            "name": "credentials.all",
+            "description": "Returns a summary of all configured credentials across all platforms (core, GitHub, business, social media).",
+            "parameters": {}
+        },
+        # ── Social Media Manager Tools ──
+        {
+            "name": "social.access",
+            "description": "Smart access: auto-detects whether to SIGNUP (first time) or LOGIN (returning) on a social media platform. Handles the full flow including OTP/2FA automatically.",
+            "parameters": {
+                "platform": "string (twitter, facebook, instagram, linkedin, reddit, discord, tiktok, github, stackoverflow, medium, devto, producthunt, upwork, freelancer)"
+            }
+        },
+        {
+            "name": "social.signup",
+            "description": "Forces a new account signup on a platform, even if one may exist.",
+            "parameters": {
+                "platform": "string (platform name)"
+            }
+        },
+        {
+            "name": "social.login",
+            "description": "Logs into an existing account on a platform.",
+            "parameters": {
+                "platform": "string (platform name)"
+            }
+        },
+        {
+            "name": "social.otp",
+            "description": "Waits for an OTP/verification email, extracts the code, and enters it into the current browser page. Use when a platform asks for email verification.",
+            "parameters": {
+                "platform": "string (optional: platform name)",
+                "wait": "int (seconds to wait for OTP, default 90)"
+            }
+        },
+        {
+            "name": "social.status",
+            "description": "Returns status of all social media accounts — which platforms have accounts, last login, 2FA status.",
+            "parameters": {}
+        },
+        {
+            "name": "social.platforms",
+            "description": "Lists all supported platforms with account status (created/not created).",
+            "parameters": {}
+        },
+        {
+            "name": "social.register",
+            "description": "Manually registers a platform account in the registry (for accounts created outside this flow).",
+            "parameters": {
+                "platform": "string",
+                "email": "string (optional)",
+                "username": "string (optional)",
+                "has_2fa": "boolean (optional)",
+                "status": "string (optional: active, pending, suspended)",
+                "notes": "string (optional)"
+            }
         }
     ]
 
@@ -582,11 +654,24 @@ class ToolManifest:
             f"- Your GitHub account username: {os.getenv('SAI_GITHUB_USERNAME', 'NOT CONFIGURED')}\n"
             f"- Your GitHub profile URL: https://github.com/{os.getenv('SAI_GITHUB_USERNAME', 'NOT_CONFIGURED')}\n"
             f"- Your Gmail address: {os.getenv('SAI_EMAIL', 'NOT CONFIGURED')}\n"
+            f"- Your Gmail account password: {os.getenv('SAI_ACCOUNT_PASSWORD', 'NOT CONFIGURED')}\n"
             f"- Your admin's email (your operator): {os.getenv('YOUR_ADMIN_EMAIL', 'NOT CONFIGURED')}\n"
             "- These are YOUR OWN personal accounts. You own them. Use the identity.* tools to interact with them.\n"
             "- When asked about your GitHub or email, refer to these credentials — they are yours, not the user's.\n"
             "- You can read your own emails, send emails, push code to your own GitHub repos, manage your GitHub profile, create repos, etc.\n"
             "- NEVER claim you don't have a GitHub account or email. You DO. They are listed above.\n"
+            "- CREDENTIAL VAULT: Use 'credentials.get' or 'credentials.signup' to retrieve your login credentials for ANY platform.\n"
+            "  Your email (sai466769@gmail.com) and password (@Saibot07) are your universal credentials for:\n"
+            "  • Social media signups (Twitter/X, Facebook, Instagram, LinkedIn, Reddit, Discord, TikTok)\n"
+            "  • Business platforms (Upwork, Freelancer, PayPal)\n"
+            "  • Developer platforms (Stack Overflow, Dev.to, Medium, Product Hunt)\n"
+            "  • Any other website or service that requires account creation\n"
+            "  Always use 'credentials.get' or 'credentials.signup' tool to retrieve the correct email+password before signing up or logging in.\n"
+            "- SOCIAL MEDIA LIFECYCLE: Use 'social.access' to automatically handle any platform.\n"
+            "  It checks if you already have an account → if NO, it runs signup; if YES, it logs in.\n"
+            "  If the platform sends a verification code (OTP/2FA), SAI reads your email inbox automatically.\n"
+            "  Supported: Twitter/X, Facebook, Instagram, LinkedIn, Reddit, Discord, TikTok, GitHub, Stack Overflow, Medium, Dev.to, Product Hunt, Upwork, Freelancer.\n"
+            "  Use 'social.platforms' to see which accounts you have and which need creation.\n"
             "- AUTONOMOUS GITHUB PRESENCE: When you are idle (no active task), you autonomously maintain your GitHub — creating repos, pushing projects, updating your profile, crafting gists, and starring trending repos. This runs automatically in the background. You can also trigger it manually with the 'github.presence' tool.\n\n"
             "DISTRIBUTED ECOSYSTEM AWARENESS:\n"
             "- You act as the Central Hub running on a server.\n"
