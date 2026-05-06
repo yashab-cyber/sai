@@ -79,6 +79,8 @@ function App(): React.JSX.Element {
   const [whitelist, setWhitelist] = useState('');
   const [port, setPort] = useState('8080');
 
+  const [commandInput, setCommandInput] = useState('');
+
   const [fadeAnim] = useState(new Animated.Value(1));
   const slideAnim = useRef(new Animated.Value(0)).current;
   const headerGlow = useRef(new Animated.Value(0)).current;
@@ -159,6 +161,32 @@ function App(): React.JSX.Element {
       addLog('API server stopped');
     } catch (e: any) {
       addLog(`Stop error: ${e.message}`);
+    }
+  };
+
+  const handleSendCommand = async () => {
+    if (!commandInput.trim()) return;
+    if (!hubConnected || !hubIp) {
+      addLog('Cannot send command: Hub not connected');
+      return;
+    }
+
+    addLog(`Sending command: ${commandInput}`);
+    try {
+      const res = await fetch(`http://${hubIp}:5000/api/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: commandInput })
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        addLog(`Task initiated successfully`);
+        setCommandInput('');
+      } else {
+        addLog(`Command error: ${data.message}`);
+      }
+    } catch (err: any) {
+      addLog(`Command failed: ${err.message}`);
     }
   };
 
@@ -256,6 +284,25 @@ function App(): React.JSX.Element {
           </View>
           <Text style={styles.chevron}>›</Text>
         </TouchableOpacity>
+      )}
+
+      {/* Command Input */}
+      {hubConnected && (
+        <View style={styles.glassCard}>
+          <Text style={styles.sectionLabel}>SAI DIRECTIVE</Text>
+          <View style={styles.commandRow}>
+            <TextInput
+              style={styles.commandInput}
+              value={commandInput}
+              onChangeText={setCommandInput}
+              placeholder="e.g. Open WhatsApp and message dad"
+              placeholderTextColor="#576574"
+            />
+            <TouchableOpacity style={styles.commandBtn} onPress={handleSendCommand}>
+              <Text style={styles.commandBtnIcon}>➤</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       )}
 
       {/* Command Log */}
@@ -498,6 +545,12 @@ const styles = StyleSheet.create({
   glassCard: { backgroundColor: 'rgba(255,255,255,0.025)', borderRadius: 16, padding: 20, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.04)' },
   sectionLabel: { color: '#3d6b7f', fontSize: 11, fontWeight: '700', letterSpacing: 2.5, marginBottom: 14 },
   sectionSub: { color: '#576574', fontSize: 11, marginTop: 2 },
+
+  // Command Input
+  commandRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  commandInput: { flex: 1, backgroundColor: 'rgba(0,0,0,0.2)', color: '#fff', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, fontSize: 13, borderWidth: 1, borderColor: 'rgba(0,229,255,0.1)' },
+  commandBtn: { backgroundColor: 'rgba(0,229,255,0.15)', width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(0,229,255,0.3)' },
+  commandBtnIcon: { color: '#00e5ff', fontSize: 16, marginLeft: 2 },
 
   // Badges
   badgeContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8 },
